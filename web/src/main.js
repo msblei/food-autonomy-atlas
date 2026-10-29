@@ -557,15 +557,20 @@ function select(clicked) {
 // The part of the map not covered by the panel (left), the food menu (right) and the key (bottom).
 // Room the tour keeps free for its card beside the panel (wide) or above the sheet (phones).
 let tourRoom = { left: 0, top: 0 };
+// Parts the tour has hidden take no room. However narrow the window, some map stays open.
 function openArea(extra = 0) {
   const wide = window.innerWidth > 760;
   const panel = document.getElementById("panel");
+  const size = (el, d) => (el.closest(".tour-hide") ? 0 : d === "w" ? el.offsetWidth : el.offsetHeight);
   const rail = document.getElementById("foodrail");
   const key = document.getElementById("legend");
-  return wide
-    ? { left: panel.offsetWidth + 40 + extra + tourRoom.left, right: rail.offsetWidth + 40 + extra, top: 40 + extra,
-      bottom: key.offsetHeight + 40 + extra }
-    : { left: 20, right: 20, top: rail.offsetHeight + key.offsetHeight + 30 + tourRoom.top, bottom: panel.offsetHeight + 20 };
+  if (!wide) {
+    return { left: 20, right: 20, top: size(rail, "h") + size(key, "h") + 30 + tourRoom.top, bottom: panel.offsetHeight + 20 };
+  }
+  const left = panel.offsetWidth + 40 + extra;
+  const right = (size(rail, "w") ? size(rail, "w") + 40 : 20) + extra;
+  const room = Math.max(0, Math.min(tourRoom.left, window.innerWidth - left - right - 200));
+  return { left: left + room, right, top: 40 + extra, bottom: (size(key, "h") ? size(key, "h") + 40 : 20) + extra };
 }
 
 // Trade view: frame the country and its biggest partners (the ones with arcs).
@@ -578,8 +583,8 @@ function fitTrade() {
   const x0 = pts[0][0];
   const lons = pts.map(([x]) => (x - x0 > 180 ? x - 360 : x0 - x > 180 ? x + 360 : x));
   const lats = pts.map((p) => p[1]);
-  map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], {
-    padding: openArea(20), maxZoom: 4, duration: 900,
+  frame([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], {
+    maxZoom: 4, extra: 20, keep: pts[0],
   });
 }
 
@@ -611,14 +616,29 @@ function offsetOf(padding) {
 // Frame `bounds` in the open area. fitBounds does nothing (and warns) when the padding leaves no
 // room, and when the fit needs a zoom below the map's lowest it clamps the zoom but keeps the
 // centre it computed for the other one (the Pacific, in a short window). In both cases take the
-// middle of the bounds at the lowest zoom instead.
-function frame(bounds, { duration = 900, maxZoom } = {}) {
-  const padding = openArea();
+// middle of the bounds at the lowest zoom instead, moved so that `keep` (the country itself) stays
+// in the open area.
+function frame(bounds, { duration = 900, maxZoom, extra = 0, keep } = {}) {
+  const padding = openArea(extra);
   const opts = maxZoom == null ? { padding } : { padding, maxZoom };
   const cam = map.cameraForBounds(bounds, opts);
   if (cam && cam.zoom >= map.getMinZoom()) { map.fitBounds(bounds, { ...opts, duration }); return; }
-  map.easeTo({ center: new maplibregl.LngLatBounds(bounds).getCenter(), zoom: map.getMinZoom(),
-    offset: offsetOf(padding), duration });
+  const z = map.getMinZoom();
+  let center = new maplibregl.LngLatBounds(bounds).getCenter().toArray();
+  if (keep) {
+    // world pixels at zoom z (Web Mercator), and back
+    const W = 512 * 2 ** z;
+    const px = ([x, y]) => [((x + 180) / 360) * W, (0.5 - Math.log(Math.tan(Math.PI / 4 + (y * Math.PI) / 360)) / (2 * Math.PI)) * W];
+    const ll = ([x, y]) => [(x / W) * 360 - 180, (Math.atan(Math.exp((0.5 - y / W) * 2 * Math.PI)) * 360) / Math.PI - 90];
+    const c = px(center), k = px(keep);
+    // within the middle half of the open area
+    const halfW = Math.max(0, (window.innerWidth - padding.left - padding.right) / 4);
+    const halfH = Math.max(0, (window.innerHeight - padding.top - padding.bottom) / 4);
+    c[0] = Math.min(k[0] + halfW, Math.max(k[0] - halfW, c[0]));
+    c[1] = Math.min(k[1] + halfH, Math.max(k[1] - halfH, c[1]));
+    center = ll(c);
+  }
+  map.easeTo({ center, zoom: z, offset: offsetOf(padding), duration });
 }
 
 // A country with its neighbours around it (the tour's "Pick your country"), in the middle of the
@@ -1333,7 +1353,7 @@ function renderLegend() {
       <div class="scale">${labels.map((l, i) => `<span class="${i === labels.length - 1 ? "last" : ""}"><i style="background:${m.colors[i]}"></i><em>${l}</em></span>`).join("")}</div>`;
     return;
   }
-  if (regionsShown() && regionsFor()) {
+  if (regionMode() === "all" || (regionMode() === "one" && regionsFor())) {
     const [title, body] = regionLegend();
     // zoomed in on a food's page: where the regions come from, and how to get the months back
     const note = state.level === "where" ? "" : `<p class="small">Eurostat crop statistics by region,
@@ -1992,6 +2012,7 @@ function loadRegions() {
       state.cropmap = crop;
       addRegionLayers();
       if (state.iso3) render();
+      else if (state.mapReady) { paintMap(); renderLegend(); }
       if (state.level === "where") fitRegions();
     })
     .catch((e) => console.error(e));
@@ -1999,11 +2020,30 @@ function loadRegions() {
 
 const regionsFor = (id = state.iso3, group = state.group) => state.regions?.countries[id]?.[group] ?? null;
 
-// The map shows regions on "Where it is grown", and on a food's page once zoomed in close where
-// that country has figures by region; the country's months come back on zooming out.
-function regionsShown() {
-  if (state.level === "where") return !!state.regions;
-  return ["food", "used"].includes(state.level) && !!state.close && !!regionsFor();
+// The map shows regions on "Where it is grown" (that country's), and, zoomed in close, every
+// country's that has figures by region for the food shown, as zooming in turns the EU into its
+// members; the months come back on zooming out.
+function regionMode() {
+  if (state.level === "where") return state.regions ? "one" : null;
+  if (!["intro", "food", "used", "sources"].includes(state.level) || !state.close || !CROP_WORDS[state.group]) return null;
+  if (!state.regions) { loadRegions(); return null; }
+  return allRegions().length ? "all" : null;
+}
+const regionsShown = () => !!regionMode();
+
+// Every country's regions for a food: [code, kt, share, t per km², country], the EU's own list left
+// out (its regions are its members').
+const allRegionsCache = {};
+function allRegions(group = state.group) {
+  if (!state.regions) return [];
+  return (allRegionsCache[group] ??= Object.entries(state.regions.countries).filter(([id]) => id !== EU)
+    .flatMap(([id, g]) => (g[group]?.regions ?? []).map((r) => [...r, id])));
+}
+// The regions the map shows now, each with the country it belongs to.
+function shownRegions() {
+  const mode = regionMode();
+  if (mode === "all") return allRegions();
+  return mode === "one" ? (regionsFor()?.regions ?? []).map((r) => [...r, state.iso3]) : [];
 }
 
 function whereLink(id) {
@@ -2134,15 +2174,15 @@ function paintFields() {
 }
 
 function paintRegions() {
-  const r = regionsFor();
-  const codes = r ? r.regions.map(([c]) => c) : [];
+  const rows = shownRegions();
+  const codes = rows.map(([c]) => c);
   const br = state.regions?.meta.breaks[state.group] ?? [];
   const step = ["step", ["feature-state", "d"], REGION_COLORS[0]];
   br.forEach((b, i) => step.push(b, REGION_COLORS[i + 1]));
   map.setPaintProperty("regions-fill", "fill-color", ["case",
     ["==", ["typeof", ["feature-state", "d"]], "number"],
     ["case", [">", ["feature-state", "d"], 0], step, NO_DATA], NO_DATA]);
-  for (const [code, , , d] of r?.regions ?? []) map.setFeatureState({ source: "regions", id: code }, { d });
+  for (const [code, , , d] of rows) map.setFeatureState({ source: "regions", id: code }, { d });
   map.setFilter("regions-fill", fieldsOn() ? ["==", ["get", "code"], ""] : ["in", ["get", "code"], ["literal", codes]]);
   map.setFilter("regions-line", ["in", ["get", "code"], ["literal", codes]]);
   map.setPaintProperty("regions-line", "line-color", fieldsOn() ? "#57503f" : "#f8f6f1");
@@ -2158,10 +2198,11 @@ function hideRegions() {
 
 function regionLegend() {
   const id = state.iso3;
+  const where = regionMode() === "all" ? "" : id === EU ? " in the EU" : ` in ${nameOf(id)}`;
   const br = state.regions?.meta.breaks[state.group] ?? [];
   const f = (x) => (x >= 10 ? Math.round(x) : x >= 1 ? x.toFixed(1).replace(/\.0$/, "") : x.toPrecision(1));
   const labels = [`<${f(br[0])}`, ...br.slice(0, -1).map((b, i) => `${f(b)}–${f(br[i + 1])}`), `${f(br[br.length - 1])}+`];
-  return [`Where <b>${cropWords()}</b> grow ${id === EU ? "in the EU" : `in ${nameOf(id)}`}, tonnes per km²`,
+  return [`Where <b>${cropWords()}</b> grow${where}, tonnes per km²`,
     `<div class="scale">${labels.map((l, i) => `<span class="${i === labels.length - 1 ? "last" : ""}"><i style="background:${REGION_COLORS[i]}"></i><em>${l}</em></span>`).join("")}
       <span class="gap"></span><span class="nodata"><i style="background:${NO_DATA}"></i><em>none</em></span></div>`];
 }
@@ -2172,12 +2213,12 @@ function regionName(code) {
 }
 
 function regionTooltip(code) {
-  const r = regionsFor()?.regions.find(([c]) => c === code);
+  const r = shownRegions().find(([c]) => c === code);
   if (!r) return null;
-  const [, kt, share, density] = r;
+  const [, kt, share, density, id] = r;
   // The colour is tonnes per km² (how densely it grows); the share is of the country's harvest.
   const dens = density == null ? "" : `<br><span class="small">${density < 10 ? density.toFixed(1) : Math.round(density).toLocaleString("en-GB")} t per km²</span>`;
-  return `<strong>${regionName(code)}</strong><br>${share < 1 ? "<1" : Math.round(share)}% of ${state.iso3 === EU ? "the EU's" : `${nameOf(state.iso3)}'s`} ${cropWords()}, ${tonnes(kt)}${state.group === "sugar" ? " of beet" : ""} a year${dens}`;
+  return `<strong>${regionName(code)}</strong><br>${share < 1 ? "<1" : Math.round(share)}% of ${id === EU ? "the EU's" : `${nameOf(id)}'s`} ${cropWords()}, ${tonnes(kt)}${state.group === "sugar" ? " of beet" : ""} a year${dens}`;
 }
 
 // When fruit, vegetables and potatoes come from abroad, month by month (import_months.json,

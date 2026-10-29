@@ -281,7 +281,8 @@ async function go(i) {
   api.setGate((kind, v) => (kind === "country" ? !!s.pick && open(v) : true));
   rule.textContent = gateRules(s);
   // the card's room beside the panel, kept free of the map's countries (none on the landing and the finale)
-  api.setRoom(s.landing || s.reveal ? { left: 0, top: 0 } : phone() ? { left: 0, top: 190 } : { left: 360, top: 0 });
+  api.setRoom(s.landing || s.reveal ? { left: 0, top: 0 } : phone() ? { left: 0, top: 190 }
+    : { left: (card.offsetWidth || 340) + 28, top: 0 });
   // What the step is not about goes at once; its own parts come in as the page draws them.
   if (!s.reveal) { document.body.classList.remove("tour-all"); hideAround(s); }
   if (s.group && !api.state.iso3 && api.state.group !== s.group) api.setGroup(s.group);

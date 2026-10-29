@@ -70,15 +70,23 @@ test("borders come as TopoJSON, and the GeoJSON still works when it is missing",
   await expect(page.locator("#place")).toHaveText("France");
 });
 
-test("zoomed in close on a food's page, the map shows the country's regions; zoomed out, its months", async ({ page }) => {
-  await page.goto("./#ITA/cereals");
+test("zoomed in close, the map shows every country's regions for the food; zoomed out, the months", async ({ page }) => {
   const key = page.locator("#legend .title");
+  const zoom = async (dy) => {
+    const box = await page.locator("#map canvas").boundingBox();
+    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.4);
+    for (let i = 0; i < 8; i++) { await page.mouse.wheel(0, dy); await page.waitForTimeout(150); }
+  };
+  await page.goto("./#ITA/cereals");
   await expect(key).toContainText("How long its own cereals would last");
-  const map = page.locator("#map canvas");
-  const box = await map.boundingBox();
-  await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.4);
-  for (let i = 0; i < 6; i++) { await page.mouse.wheel(0, -300); await page.waitForTimeout(150); }
-  await expect(key).toContainText("Where cereals grow in Italy", { timeout: 8000 });
-  for (let i = 0; i < 6; i++) { await page.mouse.wheel(0, 300); await page.waitForTimeout(150); }
+  await zoom(-300);
+  await expect(key).toContainText("Where cereals grow, tonnes per km²", { timeout: 8000 });
+  await zoom(300);
   await expect(key).toContainText("How long its own cereals would last", { timeout: 8000 });
+  // the same on the world map, with no country picked
+  await page.goto("./");
+  await page.locator("#foods .current").click();
+  await page.locator("#foods [data-food='cereals']").click();
+  await zoom(-300);
+  await expect(key).toContainText("Where cereals grow, tonnes per km²", { timeout: 8000 });
 });
