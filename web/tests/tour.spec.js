@@ -60,11 +60,13 @@ test("every step shows its part and says something whole, and the end brings the
 
 test("the example's clicks move the tour on, others do nothing; Esc ends it", async ({ page }) => {
   await page.goto("./#tour");
-  await next(page); // to "Pick a country"
-  await expect(title(page)).toHaveText("Pick a country");
-  // only Italy can be found
-  await page.locator("#country").fill("Fr");
+  await next(page); // to "Pick your country"
+  await expect(title(page)).toHaveText("Pick your country");
+  // any country with the "all food" answer can be picked; Japan (no food balance) cannot
+  await page.locator("#country").fill("Japan");
   await expect(page.locator("#country-list [data-id]")).toHaveCount(0);
+  await page.locator("#country").fill("Fr");
+  await expect(page.locator("#country-list [data-id='FRA']")).toHaveCount(1);
   await page.locator("#country").fill("Ita");
   await page.locator("#country-list [data-id='ITA']").click();
   await expect(title(page)).toHaveText("Italy", { timeout: 8000 });
@@ -83,4 +85,23 @@ test("the example's clicks move the tour on, others do nothing; Esc ends it", as
   await page.keyboard.press("Escape");
   await expect(page.locator("#tour")).toBeHidden();
   await expect(page.locator(".tour-hide")).toHaveCount(0);
+});
+
+test("the tour walks through the country picked, leaving out what it has no figures for", async ({ page }) => {
+  await page.goto("./#tour");
+  await next(page);
+  await expect(title(page)).toHaveText("Pick your country");
+  await page.locator("#country").fill("Brazil");
+  await page.locator("#country-list [data-id='BRA']").click();
+  await expect(title(page)).toHaveText("Brazil", { timeout: 8000 });
+  const seen = [];
+  for (let i = 0; i < 20; i++) {
+    seen.push(await title(page).innerText());
+    expect(await tourCard(page).innerText()).not.toMatch(/undefined|NaN|null|\[object/);
+    if (await tourCard(page).locator("[data-tour-again]").count()) break;
+    await next(page);
+  }
+  expect(seen).toContain("Who sells it");
+  // no figures by region outside Europe: no "Where it grows", and no click asked for it
+  expect(seen).not.toContain("Where it grows");
 });

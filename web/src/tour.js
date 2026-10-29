@@ -1,12 +1,16 @@
-// The tour: the real atlas, built up step by step, with Italy as the worked example. Each step
-// opens a page of the app (by its hash) and shows only the parts it is about, in the places they
-// have in the app; everything else is invisible (not moved). The map stays plain land except where
-// a step is about it. Where a step shows something to click, that click (and only the one the
-// example needs) moves the tour on, as Next does. At the end the whole map and every control
-// come in: the finale. Every figure in the cards is read from the data the page shows.
+// The tour: the real atlas, built up step by step, with the reader's own country as the worked
+// example (picked on the way; Italy when they go on without one). Each step opens a page of the app
+// (by its hash) and shows only the parts it is about, in the places they have in the app;
+// everything else is invisible (not moved). The map stays plain land except where a step is about
+// it. Where a step shows something to click, that click (and only the one the example needs) moves
+// the tour on, as Next does. Steps the country has no figures for are left out. At the end the
+// whole map and every control come in: the finale. Every figure in the cards is read from the data
+// the page shows.
 
-const ID = "ITA";
-const FOOD = "cereals";
+const FALLBACK = "ITA";
+const FOODS = ["cereals"]; // tried first for the food steps; else the food with the most to show
+let ID = FALLBACK;
+let FOOD = "cereals";
 const PAD = 6; // around each lit part
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
   "September", "October", "November", "December"];
@@ -32,40 +36,64 @@ const linkText = (sel) => (q(sel)?.textContent ?? "").replace("›", "").trim();
 const ANSWER = ["#view .q", "#view .answer", "#view svg.strip"];
 const ROW = (r) => `#card .sum-row[data-row="${r}"]`;
 
+// A country the tour can walk through: one with the "all food" answer.
+const open = (id) => api.pctFor(id, "all") != null;
+// The reader's own country, as far as the browser tells (main.js readersCountry), or Italy.
+const guess = () => { const g = api.readersCountry(); return g && open(g) ? g : FALLBACK; };
+
+// What each food step needs from the data (loaded before the steps are made).
+const NEEDS = {
+  food: (id, f) => api.pctFor(id, f) != null && !!api.country(id)?.indicators?.[f]?.components_kt,
+  trade: (id, f) => api.shares(id, f, "imports").length > 0,
+  used: (id, f) => api.perCapita(id, f)?.supply > 0,
+  seasons: (id, f) => !!api.state.seasons?.countries?.[id]?.[f]?.length,
+  where: (id, f) => !!api.regionsFor(id, f)?.regions?.length,
+};
+
+// The food of the example: cereals where the country has them, else the one with the most steps.
+function foodFor(id) {
+  const keys = api.state.data.groups.map((g) => g.key).filter((k) => k !== "all");
+  const score = (f) => (NEEDS.food(id, f) ? 1 + Object.values(NEEDS).filter((n) => n(id, f)).length : 0);
+  return [...FOODS, ...keys].reduce((best, f) => (score(f) > score(best) ? f : best), FOODS[0]);
+}
+
 // ------------------------------------------------------------------------------------------------
 // the steps
 //   hash      the page it opens          holes   what it lights (each a list of parts, one ring)
-//   keep      shown for orientation, not clickable   map   "blank" | "focus" (Italy) | "full"
-//   only      the one choice let through (country, food)   camera   where the map looks
+//   keep      shown for orientation, not clickable   map   "blank" | "focus" (the country) | "full"
+//   only      the one food let through   camera   where the map looks   has   whether the
+//   country has what the step is about   then   the click to the next step, said when it is next
 
-function steps() {
+function steps(kept = () => true) {
   const { state, country, pctFor, lasts, forHowLong, lastDay, nameOf, inText, listOf, shortTonnes } = api;
   const it = nameOf(ID);
   const foodName = api.food(FOOD);
   const foodLabel = api.groupInfo(FOOD).label;
   const place = ["#where"];
+  const need = (k) => () => NEEDS[k](ID, FOOD);
   return [
     {
       landing: true, hash: "#", group: "all", map: "blank",
+      camera: () => api.showWhole(0),
       title: "Could your country feed itself?",
       text: () => "How long the food a country produces would last its own people, if it bought nothing abroad.",
     },
     {
       title: "The map", hash: "#", group: "all", map: "full",
       holes: [["#legend"]],
-      camera: () => api.showWorld(),
+      camera: () => api.showWhole(900, true),
       text: () => `Every country has one colour: how many months its own harvests, herds and catches
         would feed its people. Red runs out within half a year, dark green has more than it needs.`,
     },
     {
-      title: "Pick a country", hash: "#", group: "all", map: "focus",
+      title: "Pick your country", hash: "#", group: "all", map: "full", pick: true,
       holes: [[".head .search"]],
-      only: { country: ID },
-      camera: () => api.showEurope(),
-      text: () => `Type <strong>${it}</strong> into the search box, or click it on the map.`,
+      camera: () => api.showNear(guess()),
+      text: () => `Type the name of your country into the search box, or click it on the map. The tour
+        then walks through it${guess() ? `; Next takes <strong>${nameOf(guess())}</strong>` : ""}.`,
     },
     {
-      title: it, hash: `#${ID}`, map: "focus",
+      key: "answer", title: it, hash: `#${ID}`, map: "focus",
       holes: [ANSWER], keep: place,
       ready: () => pctFor(ID, "all") != null,
       text: () => {
@@ -76,9 +104,9 @@ function steps() {
       },
     },
     {
-      title: "Behind the answer", hash: `#${ID}`, map: "focus",
+      key: "balance", title: "Behind the answer", hash: `#${ID}`, map: "focus",
       holes: [["#card"]], keep: place,
-      ready: () => !!country(ID)?.indicators?.all?.kcal?.balance,
+      has: () => !!country(ID)?.indicators?.all?.kcal?.balance,
       text: () => {
         const b = country(ID).indicators.all.kcal.balance;
         return `Per person and day, ${it} produces <strong>${kcal(b.produced)}</strong>, buys
@@ -87,70 +115,75 @@ function steps() {
       },
     },
     {
-      title: "Choose a food", hash: `#${ID}`, map: "focus",
+      key: "menu", title: "Choose a food", hash: `#${ID}`, map: "focus",
       holes: [["#foodrail"]], keep: place,
-      only: { food: FOOD },
+      only: { food: FOOD }, has: need("food"),
       text: () => {
         const rows = state.data.groups.filter((g) => g.key !== "all")
           .map((g) => ({ name: g.label.toLowerCase(), v: pctFor(ID, g.key) })).filter((r) => r.v != null);
         const spare = rows.filter((r) => r.v >= 100).sort((a, b) => b.v - a.v).slice(0, 2).map((r) => r.name);
         const short = rows.filter((r) => r.v < 75).sort((a, b) => a.v - b.v).slice(0, 2).map((r) => r.name);
         return `Each food has its own answer.${spare.length ? ` ${it} produces more ${listOf(spare)} than it uses` : ""}${
-          short.length ? `${spare.length ? ", but" : ""} its own ${listOf(short)} would run out first` : ""}. This menu
+          short.length ? `${spare.length ? ", but its" : " Its"} own ${listOf(short)} would run out first` : ""}${
+          spare.length || short.length ? "." : ""} This menu
           switches the map and the page to one food: open it and choose <strong>${foodLabel}</strong>.`;
       },
     },
     {
-      title: foodLabel, hash: `#${ID}/${FOOD}`, map: "full",
+      key: "food", title: foodLabel, hash: `#${ID}/${FOOD}`, map: "full",
       holes: [ANSWER, ["#card"]], keep: place,
-      ready: () => pctFor(ID, FOOD) != null,
+      has: need("food"),
       text: () => {
         const c = country(ID).indicators[FOOD].components_kt;
+        const then = kept("trade") ? " Click <strong>Buys abroad</strong> to see who sells them."
+          : kept("used") ? " Click <strong>Uses</strong> to see what they are used for." : "";
         return `${it}'s own ${foodName} would last ${lasts(pctFor(ID, FOOD))}. It produces
           <strong>${shortTonnes(c.production)}</strong> a year and buys <strong>${shortTonnes(c.imports)}</strong>
-          abroad. Click <strong>Buys abroad</strong> to see who sells them.`;
+          abroad.${then}`;
       },
     },
     {
-      title: "Who sells it", hash: `#${ID}/${FOOD}/trade`, map: "full",
-      holes: [["#view .partners"], [ROW("used")]], keep: [...place, ROW("imports")],
-      ready: () => api.shares(ID, FOOD, "imports").length > 0,
+      key: "trade", title: "Who sells it", hash: `#${ID}/${FOOD}/trade`, map: "full",
+      holes: [["#view .partners"], ...(kept("used") ? [[ROW("used")]] : [])], keep: [...place, ROW("imports")],
+      has: need("trade"),
       text: () => {
         const top = api.shares(ID, FOOD, "imports").slice(0, 3);
         return `The most comes from ${listOf(top.map((r) => `${inText(r.id)} (${pct(r.share)})`))}; the map
-          draws each seller as a line to ${it}. Then click <strong>Uses</strong>.`;
+          draws each seller as a line to ${it}.${kept("used") ? " Then click <strong>Uses</strong>." : ""}`;
       },
     },
     {
-      title: "What it is used for", hash: `#${ID}/${FOOD}/used`, map: "focus",
-      holes: [["#view .detail > h3", "#view .detail > .row", "#view .detail > .track", "#view .uses"], [ROW("food")]], keep: [...place, ROW("used")],
-      ready: () => api.perCapita(ID, FOOD)?.supply > 0,
+      key: "used", title: "What it is used for", hash: `#${ID}/${FOOD}/used`, map: "focus",
+      holes: [["#view .detail > h3", "#view .detail > .row", "#view .detail > .track", "#view .uses"],
+        ...(kept("seasons") ? [[ROW("food")]] : [])], keep: [...place, ROW("used")],
+      has: need("used"),
       text: () => {
         const pc = api.perCapita(ID, FOOD);
         const tenths = Math.round((pc.food / pc.supply) * 10);
         const rest = api.USES.filter((u) => u.key !== "food").sort((a, b) => (pc[b.key] ?? 0) - (pc[a.key] ?? 0))[0];
         return `Of every 10 kg of ${foodName} used in ${it}, ${tenths} go to food directly; most of the rest is
-          ${rest.label}. Click <strong>Produces</strong> to go back.`;
+          ${rest.label}.${kept("seasons") ? " Click <strong>Produces</strong> to go back." : ""}`;
       },
     },
     {
-      title: "When it grows", hash: `#${ID}/${FOOD}`, map: "focus",
-      holes: [["#view .season", "#view .season-key"], ["#view a.more"]], keep: place,
-      ready: () => !!state.seasons?.countries?.[ID]?.[FOOD]?.length && !!q("#view a.more"),
+      key: "seasons", title: "When it grows", hash: `#${ID}/${FOOD}`, map: "focus",
+      holes: [["#view .season", "#view .season-key"], ...(kept("where") ? [["#view a.more"]] : [])], keep: place,
+      has: need("seasons"),
+      ready: () => NEEDS.seasons(ID, FOOD) && (!kept("where") || !!q("#view a.more")),
       text: () => {
         const r = state.seasons.countries[ID][FOOD][0];
         const t = state.seasons.meta.thresholds;
         const harvest = MONTHS.filter((_, k) => r.harvest[k] >= t.harvest);
         const sown = MONTHS.filter((_, k) => r.harvest[k] < t.harvest && r.sown[k] >= t.sowing);
-        return `A typical year for each crop. ${r.label} is sown in ${listOf(sown)} and harvested in
-          ${listOf(harvest)}: one harvest has to last until the next. Then click
-          <strong>${linkText("#view a.more")}</strong>`;
+        return `A typical year for each crop. ${r.label} is ${sown.length ? `sown in ${listOf(sown)} and ` : ""}harvested in
+          ${listOf(harvest)}: one harvest has to last until the next.${kept("where") && q("#view a.more")
+          ? ` Then click <strong>${linkText("#view a.more")}</strong>` : ""}`;
       },
     },
     {
-      title: "Where it grows", hash: `#${ID}/${FOOD}/where`, map: "full",
+      key: "where", title: "Where it grows", hash: `#${ID}/${FOOD}/where`, map: "full",
       holes: [["#view .q", "#view .partners"], ["#legend"]], keep: place,
-      ready: () => !!api.regionsFor(ID, FOOD)?.regions?.length,
+      has: need("where"),
       text: () => {
         const [code, , share] = api.regionsFor(ID, FOOD).regions[0];
         return `${api.regionName(code)} alone grows ${pct(share)} of ${it}'s ${foodName}. The map shades
@@ -159,7 +192,7 @@ function steps() {
       },
     },
     {
-      title: "How do we know?", hash: `#${ID}/${FOOD}`, map: "focus",
+      key: "about", title: "How do we know?", hash: `#${ID}${kept("food") ? `/${FOOD}` : ""}`, map: "focus",
       holes: [["#foot .tools"]], keep: place,
       text: () => `Every figure has its sources. <strong>How do we know?</strong> walks through the sum for
         ${it} and how to check it in FAO's own tables; <strong>All the numbers</strong> lists FAO's figures,
@@ -173,6 +206,29 @@ function steps() {
   ];
 }
 
+// The steps for this country: those it has figures for, each saying the click to the next one
+// only when that one is there.
+function makeSteps() {
+  let raw = steps();
+  const ok = (s) => { try { return !s.has || !!s.has(); } catch { return false; } };
+  const keys = new Set(raw.filter(ok).map((s) => s.key).filter(Boolean));
+  raw = steps((k) => keys.has(k));
+  return raw.filter(ok);
+}
+
+// The reader's country: the data its steps need come in first, then the tour goes on with it.
+async function choose(id) {
+  const ticket = ++busy;
+  card.classList.add("waiting");
+  await Promise.all([api.loadTrade(), api.loadSeasons(), api.loadRegions()].map((p) => Promise.resolve(p).catch(() => null)));
+  if (ticket !== busy) return;
+  ID = id;
+  FOOD = foodFor(id);
+  const pickAt = list.findIndex((s) => s.pick);
+  list = makeSteps();
+  go(pickAt + 1);
+}
+
 function endScenario() {
   if (api.state.scenario) api.setScenario(null);
 }
@@ -182,7 +238,11 @@ function endScenario() {
 
 export function startTour(from, a) {
   api = a;
-  list = steps();
+  ID = FALLBACK;
+  FOOD = "cereals";
+  list = makeSteps();
+  // what the food steps need, on its way while the first steps show
+  for (const load of [api.loadTrade, api.loadSeasons, api.loadRegions]) Promise.resolve(load()).catch(() => null);
   if (!root) build();
   root.hidden = false;
   document.body.classList.add("touring");
@@ -218,7 +278,7 @@ async function go(i) {
   const ticket = ++busy;
   const s = list[i];
   card.classList.add("waiting");
-  api.setGate((kind, v) => (kind === "country" ? s.only?.country === v : true));
+  api.setGate((kind, v) => (kind === "country" ? !!s.pick && open(v) : true));
   rule.textContent = gateRules(s);
   // the card's room beside the panel, kept free of the map's countries (none on the landing and the finale)
   api.setRoom(s.landing || s.reveal ? { left: 0, top: 0 } : phone() ? { left: 0, top: 190 } : { left: 360, top: 0 });
@@ -321,8 +381,14 @@ function buttons(s, i) {
     <button type="button" class="tour-next" data-tour-next>Next</button>`;
 }
 
+// On: past "Pick your country" without a pick, with the guessed one.
+function forward() {
+  if (list[at]?.pick) choose(guess());
+  else go(at + 1);
+}
+
 function wireCard() {
-  card.querySelector("[data-tour-next]")?.addEventListener("click", () => go(at + 1));
+  card.querySelector("[data-tour-next]")?.addEventListener("click", () => forward());
   card.querySelector("[data-tour-back]")?.addEventListener("click", () => go(at - 1));
   card.querySelector("[data-tour-again]")?.addEventListener("click", () => go(1));
   for (const b of card.querySelectorAll("[data-tour-end]")) b.addEventListener("click", () => end());
@@ -408,6 +474,9 @@ function build() {
   }).observe(document.body, { childList: true, subtree: true });
   addEventListener("hashchange", () => {
     if (at < 0) return;
+    // a country picked in the search box or on the map becomes the example
+    const picked = list[at].pick && location.hash.match(/^#([A-Z0-9]+)$/)?.[1];
+    if (picked && open(picked)) { choose(picked); return; }
     const next = list[at + 1];
     if (next?.hash && next.hash === location.hash && list[at].hash !== location.hash) go(at + 1);
     else setTimeout(place, 50);
@@ -433,7 +502,7 @@ function build() {
     if (e.target.closest?.("input, select, textarea")) { if (e.key === "Escape" && !e.target.value) end(); return; }
     const k = e.key;
     if (k === "Escape") { end(); e.preventDefault(); return; }
-    if (["ArrowRight", "ArrowDown", "PageDown"].includes(k)) { go(at + 1); e.preventDefault(); }
+    if (["ArrowRight", "ArrowDown", "PageDown"].includes(k)) { forward(); e.preventDefault(); }
     else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(k) && at > 1) { go(at - 1); e.preventDefault(); }
   }, true);
   // Scrolling over the card, or swiping it, moves through the tour.
@@ -446,7 +515,7 @@ function build() {
     const d = Math.sign(wheel);
     wheel = 0;
     lastStep = performance.now();
-    if (d > 0 && at < list.length - 1) go(at + 1);
+    if (d > 0 && at < list.length - 1) forward();
     else if (d < 0 && at > 1) go(at - 1);
   }, { passive: false });
   let x0 = null;
@@ -455,7 +524,7 @@ function build() {
     if (x0 == null || at < 1) return;
     const dx = x0 - e.changedTouches[0].clientX;
     x0 = null;
-    if (dx > 60 && at < list.length - 1) go(at + 1);
+    if (dx > 60 && at < list.length - 1) forward();
     else if (dx < -60 && at > 1) go(at - 1);
   });
 }

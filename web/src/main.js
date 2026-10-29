@@ -51,6 +51,7 @@ const EU = "EU27";
 const PAGES = ["about", "legal", "privacy"];
 // Below this zoom the EU is coloured as one country; above it, its members appear.
 const EU_ZOOM = 2.3;
+const REGION_ZOOM = 4.5; // closer than this, a food page's map shows the country's regions
 
 // Gradients for the table level, where readers choose indicator and basis.
 const SCALES = {
@@ -113,6 +114,9 @@ async function startMap() {
     zoom: 1.5,
     minZoom: 1,
     maxZoom: 7,
+    // One world: a wide screen shows ocean beside it, not Russia twice (the trade view turns the
+    // copies on, its arcs cross the Pacific).
+    renderWorldCopies: false,
     attributionControl: false,
   });
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
@@ -326,24 +330,27 @@ async function onMapLoad() {
   setVeil(veil);
   addRegionLayers();
   state.bloc = map.getZoom() < EU_ZOOM;
+  state.close = map.getZoom() >= REGION_ZOOM;
   paintMap();
   renderLegend();
   map.once("idle", dropLand);
   if (state.level === "trade") fitTrade();
   else if (state.level === "where" && state.regionGeo) fitRegions();
   else if (state.iso3) flyTo(state.iso3);
+  else if (veil.mode === "blank") showWhole(0); // the tour's start
   else showWorld(0);
 
   map.on("zoom", () => {
     const bloc = map.getZoom() < EU_ZOOM;
-    if (bloc !== state.bloc) { state.bloc = bloc; paintMap(); renderLegend(); }
+    const close = map.getZoom() >= REGION_ZOOM;
+    if (bloc !== state.bloc || close !== state.close) { state.bloc = bloc; state.close = close; paintMap(); renderLegend(); }
   });
   // Hover only shows a small label; the panel changes on a click, so it never jumps around
   // while the mouse moves. The label follows the map too: zooming or panning under a still mouse
   // updates it (crossing EU_ZOOM turns "France" into "European Union" and back).
   let mouse = null; // last pointer position over the map, in pixels
   const hoverAt = (point) => {
-    const reg = state.level === "where" && map.getLayer("regions-fill")
+    const reg = regionsShown() && map.getLayer("regions-fill")
       ? map.queryRenderedFeatures(point, { layers: ["regions-fill"] })[0] : null;
     const tip = reg && regionTooltip(reg.properties.code);
     if (tip) {
@@ -582,6 +589,18 @@ function showWorld(duration = 900) {
   frame([[-125, -40], [150, 62]], { duration });
 }
 
+// The whole world over the whole screen (the tour's start, when nothing else shows), above the
+// key when it is there.
+function showWhole(duration = 900, withKey = false) {
+  if (!state.mapReady) return;
+  const key = document.getElementById("legend");
+  const padding = { left: 10, right: 10, top: 10, bottom: 10 + (withKey ? key.offsetHeight + 20 : 0) };
+  const bounds = [[-170, -56], [180, 80]];
+  const cam = map.cameraForBounds(bounds, { padding });
+  if (cam && cam.zoom >= map.getMinZoom()) map.fitBounds(bounds, { padding, duration });
+  else map.easeTo({ center: [5, 12], zoom: map.getMinZoom(), offset: offsetOf(padding), duration });
+}
+
 // Where the middle of the open area sits, relative to the map's own centre. Given to easeTo and
 // flyTo as `offset`, never as `padding`: a padding given to them stays on the map and is added
 // again by every later fitBounds, until nothing fits (a phone after the EU had been framed).
@@ -600,6 +619,18 @@ function frame(bounds, { duration = 900, maxZoom } = {}) {
   if (cam && cam.zoom >= map.getMinZoom()) { map.fitBounds(bounds, { ...opts, duration }); return; }
   map.easeTo({ center: new maplibregl.LngLatBounds(bounds).getCenter(), zoom: map.getMinZoom(),
     offset: offsetOf(padding), duration });
+}
+
+// A country with its neighbours around it (the tour's "Pick your country"), in the middle of the
+// open area however narrow it is, or the world.
+function showNear(iso3) {
+  const b = state.bbox[iso3];
+  if (!state.mapReady) return;
+  if (!b || b[2] - b[0] > 180) { showWorld(); return; }
+  const m = Math.max(12, (b[2] - b[0]) / 2, (b[3] - b[1]) / 2);
+  const bounds = [[b[0] - m, Math.max(-60, b[1] - m)], [b[2] + m, Math.min(80, b[3] + m)]];
+  const zoom = Math.max(map.getMinZoom(), Math.min(3, map.cameraForBounds(bounds)?.zoom ?? 3));
+  map.easeTo({ center: [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2], zoom, offset: offsetOf(openArea()), duration: 900 });
 }
 
 function flyTo(iso3) {
@@ -1236,7 +1267,9 @@ function renderPeek() {
 function paintMap() {
   if (!state.mapReady) return;
   filterLabels();
-  if (state.level === "where" && state.regions) {
+  const copies = state.level === "trade";
+  if (map.getRenderWorldCopies() !== copies) map.setRenderWorldCopies(copies);
+  if (regionsShown()) {
     paintRegions();
     // one measure per view: the countries step back while the regions show tonnes per km²
     map.setPaintProperty("atlas-fill", "fill-color", BACKDROP);
@@ -1300,9 +1333,12 @@ function renderLegend() {
       <div class="scale">${labels.map((l, i) => `<span class="${i === labels.length - 1 ? "last" : ""}"><i style="background:${m.colors[i]}"></i><em>${l}</em></span>`).join("")}</div>`;
     return;
   }
-  if (state.level === "where" && regionsFor()) {
+  if (regionsShown() && regionsFor()) {
     const [title, body] = regionLegend();
-    el.innerHTML = `<p class="title">${title}</p>${body}`;
+    // zoomed in on a food's page: where the regions come from, and how to get the months back
+    const note = state.level === "where" ? "" : `<p class="small">Eurostat crop statistics by region,
+      ${state.regions.meta.years.replace("-", "–")}. Zoom out for the months.</p>`;
+    el.innerHTML = `<p class="title">${title}</p>${body}${note}`;
     return;
   }
   if (state.level === "trade") {
@@ -1710,7 +1746,7 @@ function startTour(at = 1) {
     shares, perCapita, USES, regionsFor, regionName, loadScenario, setScenario, scenInfo, scenValue,
     setGroup: (group) => { state.group = group; render(); },
     setVeil, setGate: (f) => { tourGate = f; paintMap(); },
-    showWorld, flyTo, setRoom: (r) => { tourRoom = r; }, showEurope: () => state.mapReady && frame([[-6, 36], [26, 56]]),
+    showWorld, showWhole, flyTo, showNear, readersCountry, loadTrade, loadSeasons, loadRegions, setRoom: (r) => { tourRoom = r; }, showEurope: () => state.mapReady && frame([[-6, 36], [26, 56]]),
   })).catch((e) => console.error(e));
 }
 
@@ -1909,7 +1945,7 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
   "September", "October", "November", "December"];
 let seasonsLoading = null;
 function loadSeasons() {
-  seasonsLoading ??= loadJSON("data/seasons.json")
+  return seasonsLoading ??= loadJSON("data/seasons.json")
     .then((d) => { state.seasons = d; if (state.iso3) render(); })
     .catch((e) => console.error(e));
 }
@@ -1948,7 +1984,7 @@ function seasonStrip(id) {
 // ---- Where it is grown: regions in Europe (regions.json, methodology "Where it is grown") ----
 let regionsLoading = null;
 function loadRegions() {
-  regionsLoading ??= Promise.all([loadJSON("data/regions.json"), loadJSON("data/regions.geojson"),
+  return regionsLoading ??= Promise.all([loadJSON("data/regions.json"), loadJSON("data/regions.geojson"),
     loadJSON("data/cropmap.json").catch(() => null)])
     .then(([d, geo, crop]) => {
       state.regions = d;
@@ -1962,6 +1998,13 @@ function loadRegions() {
 }
 
 const regionsFor = (id = state.iso3, group = state.group) => state.regions?.countries[id]?.[group] ?? null;
+
+// The map shows regions on "Where it is grown", and on a food's page once zoomed in close where
+// that country has figures by region; the country's months come back on zooming out.
+function regionsShown() {
+  if (state.level === "where") return !!state.regions;
+  return ["food", "used"].includes(state.level) && !!state.close && !!regionsFor();
+}
 
 function whereLink(id) {
   if (!state.regions) { loadRegions(); return ""; }
@@ -2979,7 +3022,7 @@ function emptyFC() {
 
 let tradeLoading = null;
 function loadTrade() {
-  tradeLoading ??= loadJSON("data/trade.json")
+  return tradeLoading ??= loadJSON("data/trade.json")
     .then((d) => {
       state.trade = d;
       if (state.iso3) render();
