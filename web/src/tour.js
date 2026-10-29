@@ -285,6 +285,8 @@ async function go(i) {
     : { left: (card.offsetWidth || 340) + 28, top: 0 });
   // What the step is not about goes at once; its own parts come in as the page draws them.
   if (!s.reveal) { document.body.classList.remove("tour-all"); hideAround(s); }
+  // the map as the step wants it before its page draws (no flash of the colours it leaves out)
+  if (s.map) api.setVeil({ mode: s.map, ids: [ID] });
   if (s.group && !api.state.iso3 && api.state.group !== s.group) api.setGroup(s.group);
   if (s.hash && location.hash !== s.hash && !(s.hash === "#" && location.hash === "")) {
     if (s.group) api.state.group = s.group; // the world map keeps the food it shows

@@ -51,7 +51,7 @@ const EU = "EU27";
 const PAGES = ["about", "legal", "privacy"];
 // Below this zoom the EU is coloured as one country; above it, its members appear.
 const EU_ZOOM = 2.3;
-const REGION_ZOOM = 4.5; // closer than this, a food page's map shows the country's regions
+const REGION_ZOOM = 5.2; // closer than this, the map shows regions where there are figures by region
 
 // Gradients for the table level, where readers choose indicator and basis.
 const SCALES = {
@@ -340,6 +340,7 @@ async function onMapLoad() {
   else if (veil.mode === "blank") showWhole(0); // the tour's start
   else showWorld(0);
 
+  map.on("moveend", worldCopies);
   map.on("zoom", () => {
     const bloc = map.getZoom() < EU_ZOOM;
     const close = map.getZoom() >= REGION_ZOOM;
@@ -588,6 +589,17 @@ function fitTrade() {
   });
 }
 
+// The trade view draws the world's copies (its arcs cross the Pacific); elsewhere one world. They go
+// only once the view would not lose half of what it shows: within the one world, or wider than it.
+function worldCopies() {
+  if (state.level === "trade") { if (!map.getRenderWorldCopies()) map.setRenderWorldCopies(true); return; }
+  if (!map.getRenderWorldCopies()) return;
+  const b = map.getBounds();
+  const inside = b.getWest() >= -180 && b.getEast() <= 180;
+  const wider = b.getWest() < -180 && b.getEast() > 180;
+  if (inside || wider) map.setRenderWorldCopies(false);
+}
+
 // The inhabited world, between the panel and the food menu.
 function showWorld(duration = 900) {
   if (!state.mapReady) return;
@@ -622,7 +634,12 @@ function frame(bounds, { duration = 900, maxZoom, extra = 0, keep } = {}) {
   const padding = openArea(extra);
   const opts = maxZoom == null ? { padding } : { padding, maxZoom };
   const cam = map.cameraForBounds(bounds, opts);
-  if (cam && cam.zoom >= map.getMinZoom()) { map.fitBounds(bounds, { ...opts, duration }); return; }
+  // a bigger change of zoom takes longer, so it does not rush past
+  if (cam && cam.zoom >= map.getMinZoom()) {
+    const calm = Math.min(2200, Math.max(duration, 450 * Math.abs(cam.zoom - map.getZoom())));
+    map.fitBounds(bounds, { ...opts, duration: duration ? calm : 0 });
+    return;
+  }
   const z = map.getMinZoom();
   let center = new maplibregl.LngLatBounds(bounds).getCenter().toArray();
   if (keep) {
@@ -1287,8 +1304,7 @@ function renderPeek() {
 function paintMap() {
   if (!state.mapReady) return;
   filterLabels();
-  const copies = state.level === "trade";
-  if (map.getRenderWorldCopies() !== copies) map.setRenderWorldCopies(copies);
+  worldCopies();
   if (regionsShown()) {
     paintRegions();
     // one measure per view: the countries step back while the regions show tonnes per km²
@@ -1744,6 +1760,8 @@ function setVeil(v) {
   veil = v;
   if (!state.mapReady) return;
   map.setFilter("tour-veil", v.mode === "focus" ? ["!", ["in", ["get", "iso3"], ["literal", v.ids]]] : null);
+  // The colours fade in, but go at once: a page that changes under a fading veil would flash them.
+  map.setPaintProperty("tour-veil", "fill-opacity-transition", { duration: v.mode === "full" ? 900 : 0, delay: 0 });
   map.setPaintProperty("tour-veil", "fill-opacity", v.mode === "full" ? 0 : 1);
 }
 
@@ -2025,7 +2043,8 @@ const regionsFor = (id = state.iso3, group = state.group) => state.regions?.coun
 // members; the months come back on zooming out.
 function regionMode() {
   if (state.level === "where") return state.regions ? "one" : null;
-  if (!["intro", "food", "used", "sources"].includes(state.level) || !state.close || !CROP_WORDS[state.group]) return null;
+  // not in the tour, which flies out of "Where it grows" through the food's page
+  if (tourGate || !["intro", "food", "used", "sources"].includes(state.level) || !state.close || !CROP_WORDS[state.group]) return null;
   if (!state.regions) { loadRegions(); return null; }
   return allRegions().length ? "all" : null;
 }

@@ -75,7 +75,7 @@ test("zoomed in close, the map shows every country's regions for the food; zoome
   const zoom = async (dy) => {
     const box = await page.locator("#map canvas").boundingBox();
     await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.4);
-    for (let i = 0; i < 8; i++) { await page.mouse.wheel(0, dy); await page.waitForTimeout(150); }
+    for (let i = 0; i < 14; i++) { await page.mouse.wheel(0, dy); await page.waitForTimeout(150); }
   };
   await page.goto("./#ITA/cereals");
   await expect(key).toContainText("How long its own cereals would last");
