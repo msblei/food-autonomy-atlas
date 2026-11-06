@@ -921,13 +921,52 @@ function plainItem(name) {
 
 // The headline counts foods withheld as implausible or by review at FAO's published reading
 // (methodology, "Withheld as implausible"): say so wherever the sum is shown.
+// Whose figures: the Commission's where the JRC replaced FAO for the food (Irish dairy), else FAO's.
+// When every second reading of the withheld foods lies on one side of the published one, the
+// headline (which rises with every food's share) leans the other way: "if anything, too low".
 function restsOn(id) {
-  const names = state.data.groups
+  const parts = state.data.groups
     .filter((g) => g.key !== "all" && ["implausible", "reviewed"].includes(withheld(id, g.key)?.reason))
-    .map((g) => g.label.toLowerCase());
-  if (!names.length) return "";
-  return `<p class="small">The sum counts FAO's figures for ${listOf(names)} as published, although on
-    ${names.length > 1 ? "their own they are" : "its own it is"} withheld (${names.length > 1 ? "each food's page says" : "its page says"} why).</p>`;
+    .map((g) => ({ name: g.label.toLowerCase(), w: withheld(id, g.key), src: country(id)?.indicators?.[g.key]?.source }));
+  if (!parts.length) return "";
+  const n = parts.length;
+  const jrcAll = parts.every((p) => p.src === "jrc_bal"), jrcNone = parts.every((p) => p.src !== "jrc_bal");
+  const whose = jrcAll ? "the European Commission's" : jrcNone ? "FAO's" : "the published";
+  // > 0: every second reading higher than the published figure; < 0: every one lower; 0: unknown
+  const side = (w) => {
+    const c = w.components_kt ?? {};
+    const alts = w.reason === "implausible" ? (w.plausibility ?? []) : [];
+    if (!alts.length || !(c.supply > 0)) return 0;
+    const pub = (100 * (c.production ?? 0)) / c.supply;
+    // no ssr_alt: the second reading leaves no use at home, so its share is unbounded (higher)
+    if (alts.every((a) => a.ssr_alt == null || a.ssr_alt > pub)) return 1;
+    return alts.every((a) => a.ssr_alt != null && a.ssr_alt < pub) ? -1 : 0;
+  };
+  const sides = parts.map((p) => side(p.w));
+  const lean = sides.every((s) => s > 0) ? " If anything, it is too low."
+    : sides.every((s) => s < 0) ? " If anything, it is too high." : "";
+  return `<p class="small">The figure at the top uses ${whose} figures for ${listOf(parts.map((p) => p.name))} as they are, although we do
+    not show ${n > 1 ? "them" : "it"} on ${n > 1 ? "their" : "its"} own because ${n > 1 ? "they look" : "it looks"} wrong
+    (${n > 1 ? "each food's page says" : "its page says"} why).${lean}</p>`;
+}
+
+// The notes under the "all food" headline (methodology, '"All food": notes under the headline'),
+// marked by the asterisk on the question. Labels only: the one figure they quote, how long the food
+// lasts food by food (kcal.feed_share), is published and checked like the headline.
+const COUNTS_AS_EATEN = "Each food counts by how much of it people here eat. Grain and soy fed to animals count "
+  + "as the meat, milk and eggs they become; crops made into fuel, or sold abroad and hardly eaten here, count for little.";
+const MENU_NOTE = 75; // the surplus note: whole year or more, but under this share food by food (9 months)
+function headNotes(id, v) {
+  const k = country(id)?.indicators?.all?.kcal ?? {};
+  const notes = [`* ${COUNTS_AS_EATEN}`];
+  // A surplus of one or two foods stands in for others (the headline is not capped): name them,
+  // and say how long the food lasts when no food may stand in for another.
+  if (v >= 100 && k.feed_share != null && k.feed_share < MENU_NOTE && k.surplus_from?.length) {
+    const names = listOf(k.surplus_from.map((g) => groupInfo(g).label.toLowerCase()));
+    notes.push(`Much of this is ${names}, of which ${id === EU ? "the EU" : "it"} produces far more than it uses.
+      Food by food, with no surplus standing in for another food, its own food would last ${lasts(k.feed_share)}.`);
+  }
+  return notes.map((t) => `<p class="small">${t}</p>`).join("") + restsOn(id);
 }
 
 // Why: in FAO's own words and figures, for the food page and the receipt.
@@ -990,7 +1029,10 @@ function robustPct(id, group = state.group) {
   if (!r || r[0] == null || r[1] == null) return null;
   const f = all ? country(id)?.feed?.imported_pct : 0;
   if (f == null) return null;
-  const lo = r[0] * (1 - f / 100);
+  // all food: the feed step lowers a reading by at most f, tracing the crops behind oil and beer by
+  // at most trace_pts points (methodology, "Withheld foods on the map")
+  const trace = all ? (country(id)?.indicators?.all?.kcal?.withheld?.trace_pts ?? 0) : 0;
+  const lo = r[0] * (1 - f / 100) - trace;
   if (lo >= SEASONS[4].max) return lo;
   if (r[1] < SEASONS[0].max) return r[1];
   return null;
@@ -1500,7 +1542,8 @@ function cardRows(id, group = state.group) {
     const pct = (x) => (Math.max(0, x) / top) * 100;
     const kcal = (v) => `${Math.round(v).toLocaleString("en-GB")} kcal`;
     const why = "Calories per person a day, food by food: what is produced, bought and sold of each "
-      + "food's calories. Pork, chicken and eggs from imported feed count as bought.";
+      + "food's calories, as far as people here eat that food. Grain fed to animals counts as the meat, "
+      + "milk and eggs it becomes. Pork, chicken and eggs from imported feed count as bought.";
     for (const r of Object.values(rows)) r.unit = "/person/day"; // drawn lighter (renderFrame)
     Object.assign(rows.food, { value: kcal(P), bar: [0, pct(P)], title: why });
     Object.assign(rows.imports, { value: kcal(M), bar: [pct(P), pct(M)], title: why });
@@ -1819,9 +1862,10 @@ function viewNoData() {
   const nat = state.data?.meta?.national?.[state.iso3];
   if (nat && state.group === "all") {
     const s = state.data.meta.sources[nat.source];
-    return `<p class="q">Food produced in ${inText(state.iso3)} alone would give enough calories</p>
+    return `<p class="q">Food produced in ${inText(state.iso3)} alone would give enough calories*</p>
     <p class="answer">${forHowLong(nat.value)}.</p>
     ${strip(nat.value)}
+    <p class="small">* ${COUNTS_AS_EATEN}</p>
     <p class="small">FAO publishes no food balance for ${nameOf(state.iso3)}. This is its own statistic:
       <strong>${Math.round(nat.value)}%</strong> of the calories it uses, ${nat.years.replace("-", "–")}
       (<a href="${s.url}" target="_blank" rel="noopener">${s.publisher}, ${s.title}</a>). It counts meat, milk
@@ -1857,9 +1901,9 @@ function viewCountry() {
         contradict themselves, and the total changes a lot depending on how they are read.</p></details>`
     : v == null
     ? `<p class="lead-none">Not enough data from FAO.</p>`
-    : `<p class="q">Food produced ${id === EU ? "in the EU" : `in ${inText(id)}`} alone would give enough calories</p>
+    : `<p class="q">Food produced ${id === EU ? "in the EU" : `in ${inText(id)}`} alone would give enough calories*</p>
       <p class="answer"><a href="${link({ level: "sources", group: "all" })}" title="How do we know?">${forHowLong(v)}</a>.</p>
-      ${strip(v)}${restsOn(id)}`;
+      ${strip(v)}${headNotes(id, v)}`;
   return `
     ${head}
     ${euLine(id, "all")}
@@ -2561,7 +2605,16 @@ function viewAbout() {
     <p>For each country and food we divide what is produced there (farmed, fished or made, like wine) by what the
       country uses, then turn that share into months of the year: 85% of 12 months is about
       10 months. All food together is counted in calories, with pork, chicken and eggs counted only as far
-      as the animals' feed was grown in the country. Choose a country to see its own figures worked out.</p>
+      as the animals' feed was grown in the country, and oil and beer only as far as their seeds and barley
+      were. Choose a country to see its own figures worked out.</p>
+    <p>All food is counted the way people eat it: each food weighs as much as the calories people get from it.
+      Grain and soy fed to animals count as the meat, milk and eggs they become, and crops made into fuel, or
+      sold abroad and hardly eaten at home, count for little. So a country that grows mostly animal feed and
+      crops for export grows far more calories than this figure shows. It answers a narrower question: how
+      much of what its people eat could its own farms supply?</p>
+    <p class="small">Switzerland's Federal Office for Agriculture (FOAG) counts its own self-sufficiency the same
+      way, in calories of food as people eat it; its “net” figure, like the one here, counts meat, milk and eggs
+      only as far as the animals' feed was grown at home.</p>
     ${checks()}
     ${caveats(null, groupInfo("all"))}
     ${sourceList()}
@@ -2853,13 +2906,15 @@ function receiptAll(id, v) {
       than there was). Their calories still count in the daily total.</p>` : ""}
     ${restsOn(id)}
     <p>For each food we take what is produced at home divided by what is used, and weigh it by how
-      many of those calories the food provides. A surplus of one food can make up for a shortage of
+      many calories people here get from that food. Grain fed to animals therefore counts only as the
+      meat, milk and eggs it becomes. A surplus of one food can make up for a shortage of
       another: wheat can stand in for imported fruit or oil. ${p?.ssr != null ? `Together that gives
       <strong>${Math.round(p.ssr)}%</strong>.` : ""}</p>
     ${f?.imported_pct != null ? `<p>Pigs and chickens live on grain and oilseed meal, not grass. <strong>${Math.round(f.imported_pct)}%</strong>
       of the protein in feed other than grass and hay ${where} comes from abroad, so pork, chicken and eggs count
       only for the rest. Cattle and sheep live mostly on grass, so beef, lamb and milk lose only the imported
-      share of the grain and meal they get besides it.
+      share of the grain and meal they get besides it. Oil and beer count only as far as their seeds and
+      barley were grown ${id === EU ? "in the EU" : "in the country"}, not where they were pressed or brewed.
       That gives <strong>${Math.round(v)}%</strong>.</p>` : ""}
     ${inMonths(id, v)}
     ${country(id)?.indicators?.all?.protein?.feed_ssr != null ? `<p class="small">Counted by protein instead
@@ -2895,8 +2950,8 @@ function checkYourself(id) {
     </ol>
     ${state.group === "all" && country(id)?.indicators?.all?.kcal?.ssr != null && country(id)?.indicators?.all?.kcal?.feed_ssr != null
       ? `<p class="small">That gives the sum before feed, <strong>${Math.round(country(id).indicators.all.kcal.ssr)}%</strong>.
-        The feed step takes FAO's Supply Utilization Accounts, Feedipedia's protein contents and GLEAM's cattle diets,
-        all listed under “How do we know?”, and gives ${Math.round(country(id).indicators.all.kcal.feed_ssr)}%.</p>` : ""}
+        The step for feed, and for the seeds and barley behind oil and beer, takes FAO's Supply Utilization
+        Accounts, Feedipedia's protein contents and GLEAM's cattle diets, all listed under “How do we know?”, and gives ${Math.round(country(id).indicators.all.kcal.feed_ssr)}%.</p>` : ""}
     <p class="small">Or download the whole table:
       <a href="${s.file_url}">FAO data file</a> (zip, ${s.size_mb ? `about ${s.size_mb} MB` : "large"}).</p>
     ${id === EU ? `<p class="aside">Our EU figures differ from FAO's own “European Union (27)” row on purpose.

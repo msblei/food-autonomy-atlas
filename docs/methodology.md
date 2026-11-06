@@ -350,11 +350,46 @@ animals ate. The headline takes section "Feed"'s imported share of feed protein 
 the EU as one) off pigs and poultry, as section "Feed" does for the meat and egg groups: for the
 leaf items Pigmeat, Poultry Meat and Eggs, `SSR_i' = (1 − f) · SSR_i`; for Bovine Meat and dairy
 (as one food) `SSR_i' = (1 − f · c_cattle) · SSR_i`, for Mutton & Goat Meat
-`(1 − f · c_small)` (section "Feed", "Cattle, sheep and goats"); every other item unchanged, then
-the same two weighted means over the same items:
+`(1 − f · c_small)` (section "Feed", "Cattle, sheep and goats"); for oil and beer, the crop they
+are made from (below), `SSR_i' = s_crop · SSR_i`; every other item unchanged, then the same two
+weighted means over the same items:
 
     feed_ssr_w   = Σ_i w_i · SSR_i' / Σ_i w_i
     feed_share_w = Σ_i w_i · min(SSR_i', 100) / Σ_i w_i
+
+**Crops behind oil and beer** (2026-11-06). FAO counts oil as produced where it is pressed and beer
+where it is brewed, from home-grown or imported seeds and barley alike: the Netherlands' soybean oil
+was 479% self-sufficient on beans that are all imported, China's 96% on 16% home-grown beans. The
+feed step already counts a cake as imported when its beans were; the headline now does the same
+for the oils and beer whose crop is one FBS item, with the even mix of section "Feed":
+
+    s_crop = P_crop / (P_crop + M_crop)        (1 where P_crop + M_crop = 0)
+
+| Item | Crop |
+|---|---|
+| Soyabean Oil | Soyabeans |
+| Rape and Mustard Oil | Rape and Mustardseed |
+| Sunflowerseed Oil | Sunflower seed |
+| Groundnut Oil | Groundnuts |
+| Cottonseed Oil | Cottonseed |
+| Sesameseed Oil | Sesame seed |
+| Palmkernel Oil | Palm kernels |
+| Coconut Oil | Coconuts - Incl Copra |
+| Maize Germ Oil | Maize and products |
+| Ricebran Oil | Rice and products |
+| Beer | Barley and products |
+
+P and M are the crop item's FBS production and imports (window means; the EU27's imports from
+outside the EU). Left out: olive oil and wine (imported olives and grapes are mostly eaten, not
+pressed, so the mix would count Swiss or British wine as made from imported grapes), palm oil (its
+fruit is no FBS item and is not traded), sugar (FBS sugar is in raw equivalent, from the country's
+own cane and beet), spirits, fermented beverages and other sweeteners (no single crop). The food
+pages keep FAO's own figure for each oil and for wine and beer; only "all food" traces the crop,
+as it does feed, so the sum before feed and crops (`kcal.ssr`) stays FAO's and can be checked in
+FAOSTAT. Effect on the headline, 2021–2023 (132 of 171 countries move, none up): Bulgaria −20 points
+(sunflower seed crushed from Ukraine), Netherlands −17.5, Taiwan −17 (to 28.5%; the Ministry of
+Agriculture's own figure is 30.3–30.8%), Portugal −12, Germany −8 (to 78%), EU27 −3.6 (to 90%),
+United States −0.6, Switzerland −0.9.
 
 A withheld "all food" figure (`*_flag`) has no feed-adjusted figure. A
 country without feed records in FAO's accounts has none either. Exported as `feed_ssr` and
@@ -391,6 +426,33 @@ question confused readers (2026-10-18), and the capped one answers a different q
 country down for coffee it cannot grow, and it cannot exceed 100%). Trend
 lines for "all food" (not shown in the UI) stay the unadjusted protein figure: feed shares exist
 for the window only.
+
+### "All food": notes under the headline
+
+The headline weighs each food by the calories people eat of it. It is not the calories a country's
+crops hold against the calories its people eat: crops fed to animals count only as the meat, milk
+and eggs they become, and crops made into fuel, or exported and hardly eaten at home (soybeans,
+feed maize), barely count. A pre-release review (2026-11-05) put the crop calories of the United
+States at about 4 times what its people eat, against a headline of 97%, Argentina's about 8 times
+against 172%. The number stays; the wording says what it counts. It is the definition Switzerland's
+Federal Office for Agriculture (FOAG, "net" self-sufficiency) and Japan's MAFF use, which the "How
+do we know?" page says. The question ends in an asterisk, and the notes under the headline (and the
+tour, and the card's tooltip) say in plain words what counts. One note is a label computed in
+`export.headline_labels`; the UI adds another from `withheld` (no new figures):
+
+- **A surplus standing in for other foods** (`kcal.surplus_from`, group keys, at most 2): per group,
+  `Σ_i kcal_i · max(SSR_i − 100, 0) / 100` over its items with an SSR (dairy as one food at its group
+  ratio, as published where withheld, as in "all food"); a group is named when it carries at least
+  25% of the country's total. The UI shows the note when the headline is at least 100% and the capped
+  figure `kcal.feed_share` is under 75% (9 months), and says how long the food lasts food by food:
+  Eswatini, 257% headline, "much of this is sugar … food by food … about 5 months"; also Belize,
+  New Zealand, Iceland, Canada (2021–2023: 12 countries).
+- **Made at home from imported crops**: shown as a note from 2026-11-05 to 2026-11-06, then
+  replaced by tracing the crops in the headline itself ("Crops behind oil and beer", above).
+- **Withheld foods counted as published** (from `withheld`, section "Withheld as implausible"): the
+  note names whose figures they are (the Commission's for JRC dairy) and, when every second reading
+  lies on one side of the published one, says the headline is "if anything, too low" (or high).
+  Ireland: dairy 195% published, 319% on the second reading.
 
 ## "How long would it last?" (what the UI shows first)
 
@@ -439,10 +501,18 @@ A withheld food (sections "Withheld") has no figure, but its two readings (`with
 agree on the map's band: both at or above 104.17% (more than a year) or both under 50% (under
 six months). The map and the country's food list then show that band, in words ("more than a
 year on any reading of FAO's figures"), never a number; rankings still leave the food out.
-For "all food" the range is not feed-adjusted; the adjustment lowers a reading by at most the
-imported share of feed protein `f` (section "Feed": only pigs, poultry and eggs, each at most by
-`f`), so the lower reading counts as `(1 − f) × low`. Ukraine (2021–2023): 184.5% × (1 − 0.003),
-more than a year on any reading.
+For "all food" the range is not feed-adjusted; the feed step lowers a reading by at most the
+imported share of feed protein `f` (only animal products, each at most by `f`), and tracing the
+crops behind oil and beer by at most
+
+    trace_pts = Σ_made k_i · SSR_i · (1 − s_crop) / Σ_A k_i
+
+points, with SSR_i the item's own ratio, or reading B's P / max(D, food, 0) where FAO's
+contradicts itself, and Σ_A k_i the calories of reading A (the smaller divisor, so the larger
+bound). The two steps touch different foods, so the lower reading counts as
+`(1 − f) × low − trace_pts` (`kcal.withheld.trace_pts`, exported for every withheld "all food"
+kcal figure). Ukraine (2021–2023): 184.5% × (1 − 0.003) − 0.28, more than a year on any
+reading.
 
 ## Trade partners (who buys from and sells to whom)
 

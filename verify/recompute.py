@@ -2149,6 +2149,21 @@ def main():
 
     # ---- all food, feed-adjusted (methodology '"All food" coverage': pigs and poultry) ----
     adj_names = {"Pigmeat", "Poultry Meat", "Eggs"}
+    # methodology, "Crops behind oil and beer": item -> the crop it is made from
+    made_from = {"Soyabean Oil": "Soyabeans", "Rape and Mustard Oil": "Rape and Mustardseed",
+                 "Sunflowerseed Oil": "Sunflower seed", "Groundnut Oil": "Groundnuts",
+                 "Cottonseed Oil": "Cottonseed", "Sesameseed Oil": "Sesame seed", "Palmkernel Oil": "Palm kernels",
+                 "Coconut Oil": "Coconuts - Incl Copra", "Maize Germ Oil": "Maize and products",
+                 "Ricebran Oil": "Rice and products", "Beer": "Barley and products"}
+    code_by_name = {nm: c for c, nm in D.item_names.items()}
+
+    def s_crop(bal, made):
+        """P / (P + M) of the crop the item is made from; 1 without production and imports."""
+        c = code_by_name.get(made_from[made])
+        if c not in bal:
+            return 1.0
+        p_, m_ = nz(bal[c]["P"]), nz(bal[c]["M"])
+        return 1.0 if p_ + m_ <= 0 else min(1.0, max(0.0, p_ / (p_ + m_)))
     for iso, c in sorted(ssr["countries"].items()):
         a_exp = c.get("indicators", {}).get("all")
         r = res.get(iso, {})
@@ -2166,10 +2181,13 @@ def main():
                 cc = 0.0 if isnan(m_[6]) else m_[6] / 100
                 cs = 0.0 if isnan(m_[7]) else m_[7] / 100
 
-                def factor(code):  # methodology '"All food" coverage': which food rests on which feed
+                bal_ = r.get("item_bal") or {}
+
+                def factor(code):  # methodology '"All food" coverage': which food rests on which feed or crop
                     nm = D.item_names.get(code) if code is not None else "dairy"
                     return (1 - f if nm in adj_names else 1 - f * cc if nm in ("Bovine Meat", "dairy")
-                            else 1 - f * cs if nm == "Mutton & Goat Meat" else 1.0)
+                            else 1 - f * cs if nm == "Mutton & Goat Meat"
+                            else s_crop(bal_, nm) if nm in made_from else 1.0)
                 foods = [(fd[0] * factor(code), fd[wi]) for code, fd, _ in r["all"]["foods_a"]]
                 den = sum(w_ for _, w_ in foods)
                 if den > 0:
@@ -2189,6 +2207,36 @@ def main():
                         if e is None or abs(e - mv) > 0.5 + 1e-9:
                             record("all_balance", {"file": "ssr.json", "country": iso, "group": "all",
                                                    "field": f"kcal.balance.{k}"}, e, round(mv))
+            if b == "kcal" and r["all"][b]["reason"]:
+                # methodology "Withheld foods on the map": the most tracing oil and beer can lower a reading
+                bal_ = r.get("item_bal") or {}
+                fa = r["all"]["foods_a"]
+                own_ssr = {code: fd[0] for code, fd, _ in fa if code is not None}
+                den_a = sum(fd[2] for _, fd, _ in fa)
+                tp = None
+                if den_a > 0:
+                    tp = 0.0
+                    for nm in made_from:
+                        code = code_by_name.get(nm)
+                        if code not in bal_ or not nz(bal_[code]["kcal"]) > 0:
+                            continue
+                        sc = s_crop(bal_, nm)
+                        if sc >= 1:
+                            continue
+                        it = bal_[code]
+                        if code in own_ssr:
+                            v = own_ssr[code]
+                        else:
+                            d_ = max(nz(it["D"]), nz(it["food"]), 0.0)
+                            if not d_ > 0:
+                                continue
+                            v = 100 * nz(it["P"]) / d_
+                        tp += nz(it["kcal"]) * v * (1 - sc) / den_a
+                e = (a_exp.get("kcal", {}).get("withheld") or {}).get("trace_pts")
+                counts["all_trace"] += 1
+                if (e is None) != (tp is None) or (e is not None and abs(e - tp) > 0.005 + 1e-9):
+                    record("all_trace", {"file": "ssr.json", "country": iso, "group": "all",
+                                         "field": "kcal.withheld.trace_pts"}, e, None if tp is None else round(tp, 2))
             for k, mv in mine.items():
                 e = a_exp.get(b, {}).get(k)
                 counts["all_feed"] += 1

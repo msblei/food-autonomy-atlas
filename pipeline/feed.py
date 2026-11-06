@@ -82,6 +82,39 @@ def read_sua(years: tuple[int, int], codes: set[int]) -> pd.DataFrame:
 ADJUSTED_ITEMS = ("Pigmeat", "Poultry Meat", "Eggs")
 CATTLE_ITEMS = ("Bovine Meat",)
 SMALL_ITEMS = ("Mutton & Goat Meat",)
+# Oil and beer count only for the home-grown share of the crop they are made from, P / (P + M),
+# as cakes do (methodology, '"All food" coverage', "Crops behind oil and beer").
+MADE_FROM = {
+    "Soyabean Oil": "Soyabeans",
+    "Rape and Mustard Oil": "Rape and Mustardseed",
+    "Sunflowerseed Oil": "Sunflower seed",
+    "Groundnut Oil": "Groundnuts",
+    "Cottonseed Oil": "Cottonseed",
+    "Sesameseed Oil": "Sesame seed",
+    "Palmkernel Oil": "Palm kernels",
+    "Coconut Oil": "Coconuts - Incl Copra",
+    "Maize Germ Oil": "Maize and products",
+    "Ricebran Oil": "Rice and products",
+    "Beer": "Barley and products",
+}
+
+
+def crop_shares(items: pd.DataFrame) -> dict[str, float]:
+    """One country's FBS items -> {made item: s_crop}, s = P / (P + M) of its crop (1 when the crop
+    has no production and no imports, or no row)."""
+    by = items.drop_duplicates("item").set_index("item")
+    out = {}
+    for made, crop in MADE_FROM.items():
+        if crop not in by.index:
+            out[made] = 1.0
+            continue
+        p = by.at[crop, "production"]
+        m = by.at[crop, "imports"]
+        p, m = (0.0 if pd.isna(p) else float(p)), (0.0 if pd.isna(m) else float(m))
+        out[made] = 1.0 if p + m <= 0 else min(1.0, max(0.0, p / (p + m)))
+    return out
+
+
 GLEAM_INTAKE = "gleam_feed_intake.csv"
 GLEAM_PROTEIN = "gleam_feed_protein.csv"
 
@@ -110,7 +143,8 @@ def traded_share() -> pd.DataFrame:
 
 def all_food(f: float, items: pd.DataFrame, total: pd.Series, cc: float = 0.0, cs: float = 0.0) -> dict:
     """"All food" with SSR_i' = factor_i * SSR_i: 1 - f for ADJUSTED_ITEMS, 1 - f*c_cattle for beef and
-    dairy (as one food, compute.overall's dairy_*), 1 - f*c_small for mutton and goat meat; against
+    dairy (as one food, compute.overall's dairy_*), 1 - f*c_small for mutton and goat meat, s_crop
+    for oil and beer (MADE_FROM, crop_shares); against
     the same items and weights as compute.overall (its `{w}_den`, reading A)."""
     out = {}
     for w in ("protein", "kcal"):
@@ -122,6 +156,7 @@ def all_food(f: float, items: pd.DataFrame, total: pd.Series, cc: float = 0.0, c
         a = items[items["ssr"].notna() & (items[w] > 0)]
         parts = [(a[a["item"].isin(ADJUSTED_ITEMS)], 1 - f), (a[a["item"].isin(CATTLE_ITEMS)], 1 - f * cc),
                  (a[a["item"].isin(SMALL_ITEMS)], 1 - f * cs)]
+        parts += [(a[a["item"] == made], s) for made, s in crop_shares(items).items() if s < 1]
         terms = [(r[w], r["ssr"], k) for sub, k in parts for _, r in sub.iterrows()]
         dw, ds = total.get(f"dairy_{w}"), total.get("dairy_ssr")
         if pd.notna(dw) and dw > 0 and pd.notna(ds):

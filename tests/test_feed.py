@@ -72,3 +72,29 @@ def test_marketing_years_start_in_the_window_years():
 
     assert feedcheck.marketing_years((2021, 2023)) == ["2021-22", "2022-23", "2023-24"]
     assert feedcheck.marketing_years((2099, 2099)) == ["2099-00"]
+
+
+def test_oil_and_beer_count_only_for_the_home_grown_share_of_their_crop():
+    # methodology, "Crops behind oil and beer": soybean oil pressed from beans that are three
+    # quarters imported counts a quarter; beer from home-grown barley and rice stay as they are
+    items = pd.DataFrame([
+        {"item": "Soyabeans", "production": 10.0, "imports": 30.0, "ssr": 25.0, "kcal": 0.0, "protein": 0.0},
+        {"item": "Soyabean Oil", "production": 8.0, "imports": 0.0, "ssr": 200.0, "kcal": 100.0, "protein": 0.0},
+        {"item": "Barley and products", "production": 50.0, "imports": 0.0, "ssr": 100.0, "kcal": 0.0, "protein": 0.0},
+        {"item": "Beer", "production": 40.0, "imports": 0.0, "ssr": 100.0, "kcal": 100.0, "protein": 1.0},
+        {"item": "Wheat and products", "production": 90.0, "imports": 10.0, "ssr": 90.0, "kcal": 200.0, "protein": 9.0},
+    ])
+    s = feed.crop_shares(items)
+    assert s["Soyabean Oil"] == pytest.approx(0.25)
+    assert s["Beer"] == 1.0
+    assert s["Coconut Oil"] == 1.0  # no crop row: nothing to trace
+    den = 400.0
+    total = pd.Series({"kcal_den": den, "kcal_ssr": (200 * 100 + 100 * 100 + 90 * 200) / den,
+                       "kcal_share": (100 * 100 + 100 * 100 + 90 * 200) / den, "kcal_flag": "",
+                       "kcal_imports": 0.0, "kcal_exports": 0.0,
+                       "protein_den": 10.0, "protein_ssr": 91.0, "protein_share": 91.0, "protein_flag": ""})
+    out = feed.all_food(0.0, items, total)
+    assert out["kcal_feed_ssr"] == pytest.approx((0.25 * 200 * 100 + 100 * 100 + 90 * 200) / den)
+    assert out["kcal_feed_share"] == pytest.approx((min(0.25 * 200, 100) * 100 + 100 * 100 + 90 * 200) / den)
+    # the oil's calories from imported beans count as bought abroad
+    assert out["kcal_imports"] == pytest.approx(0.75 * 200 * 100 / 100)

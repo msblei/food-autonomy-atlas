@@ -100,7 +100,8 @@ function steps(kept = () => true) {
         const v = pctFor(ID, "all");
         const day = lastDay(v);
         return `Food produced in ${it} alone would give enough calories ${forHowLong(v)}${day
-          ? `: eaten from 1 January, it would run out on ${day}` : ""}.`;
+          ? `: eaten from 1 January, it would run out on ${day}` : ""}. Each food counts by how much of it
+          people here eat.`;
       },
     },
     {
@@ -109,7 +110,7 @@ function steps(kept = () => true) {
       has: () => !!country(ID)?.indicators?.all?.kcal?.balance,
       text: () => {
         const b = country(ID).indicators.all.kcal.balance;
-        return `Per person and day, ${it} produces <strong>${kcal(b.produced)}</strong>, buys
+        return `Per person and day, ${it} produces <strong>${kcal(b.produced)}</strong> of the foods its people eat, buys
           <strong>${kcal(b.imports)}</strong> abroad and sells <strong>${kcal(b.exports)}</strong>. It uses
           <strong>${kcal(b.used)}</strong>. Produced against used gives the months.`;
       },

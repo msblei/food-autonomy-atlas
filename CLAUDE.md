@@ -30,7 +30,8 @@ Updating the data (what changes when, the manual JRC step, versions, review list
   (production, imports, exports, supply) over the window, then compute the ratio — never average
   ratios.
 - **Headline ("all food"):** calories, counting meat, milk and eggs only for home-grown feed
-  (pigs and poultry for all feed, cattle, sheep and goats for their traded feed, GLEAM 3)
+  (pigs and poultry for all feed, cattle, sheep and goats for their traded feed, GLEAM 3), and
+  oil and beer only for home-grown seeds and barley (2026-11-06)
   (`kcal.feed_ssr`), one figure for map, tooltip, panel and rankings. The capped "today's menu"
   figure, protein and the unadjusted figures stay on "All the numbers" only (one figure in the UI,
   user's decision 2026-10-18). (Changed from uncapped protein on 2026-10-18 after an

@@ -281,6 +281,64 @@ def core_of(full: dict) -> dict:
     return {"meta": full["meta"], "groups": full["groups"], "countries": countries}
 
 
+# Notes under the "all food" headline (methodology, '"All food": notes under the headline'): a
+# label, no new figure. Which foods carry a surplus that stands in for other foods.
+SURPLUS_SHARE = 0.25   # a food is named when it carries at least this share of the surplus calories
+SURPLUS_MAX = 2        # ... at most this many, largest first
+
+
+def headline_labels(items: pd.DataFrame, ind: dict) -> dict:
+    """`surplus_from`: food groups (keys) carrying the calories produced above their own use,
+    sum over the group's items with an SSR of kcal_i * max(SSR_i - 100, 0) / 100, dairy as one
+    food at its group ratio (as in "all food"; a withheld dairy figure at FAO's or the JRC's
+    reading as published, which is what the headline uses)."""
+    x = items[items["group"].notna() & (items["kcal"] > 0) & items["ssr"].notna()]
+    surplus: dict[str, float] = {}
+    for g, sub in x.groupby("group"):
+        if g == "dairy":
+            d = ind.get("dairy") or {}
+            ssr = (d.get("tonnes") or {}).get("ssr")
+            c = (d.get("withheld") or {}).get("components_kt") or {}
+            if ssr is None and (c.get("supply") or 0) > 0:
+                ssr = 100 * c["production"] / c["supply"]
+            surplus[g] = float(sub["kcal"].sum()) * max((ssr or 0) - 100, 0) / 100
+        else:
+            surplus[g] = float((sub["kcal"] * (sub["ssr"] - 100).clip(lower=0) / 100).sum())
+    total = sum(surplus.values())
+    if not total > 0:
+        return {}
+    lead = [g for g, s in sorted(surplus.items(), key=lambda t: -t[1]) if s / total >= SURPLUS_SHARE]
+    return {"surplus_from": lead[:SURPLUS_MAX]} if lead else {}
+
+
+def trace_pts(items: pd.DataFrame, den: float) -> float | None:
+    """The most that tracing the crops behind oil and beer (feed.MADE_FROM) can lower a withheld
+    "all food" kcal reading, in points (methodology, "Withheld foods on the map"): sum over the
+    traced items of kcal_i * SSR_i * (1 - s_crop) / den, SSR_i the item's own ratio or, where it
+    contradicts itself, P / max(D, food, 0); den = reading A's calories."""
+    from .feed import crop_shares
+
+    if not den or not den > 0:
+        return None
+    by = items.drop_duplicates("item").set_index("item")
+    total = 0.0
+    for made, s in crop_shares(items).items():
+        if s >= 1 or made not in by.index:
+            continue
+        r = by.loc[made]
+        if not r["kcal"] > 0:
+            continue
+        ssr = r["ssr"]
+        if pd.isna(ssr):
+            d = max(r["supply"] if pd.notna(r["supply"]) else 0.0, r["food"] if pd.notna(r["food"]) else 0.0, 0.0)
+            p = r["production"] if pd.notna(r["production"]) else 0.0
+            if not d > 0:
+                continue
+            ssr = 100 * p / d
+        total += float(r["kcal"]) * float(ssr) * (1 - s) / den
+    return total
+
+
 def export_ssr() -> None:
     m = config.MAPPINGS
     for name in ("groups", "items", "overall", "trends"):
@@ -326,7 +384,8 @@ def export_ssr() -> None:
                 "protein_share": "sum(protein_i * min(ssr_i, 100)) / sum(protein_i), FBS leaf items",
                 "kcal_feed_ssr": "sum(kcal_i * ssr_i') / sum(kcal_i), ssr_i' = (1 - f) * ssr_i for pigmeat, "
                                  "poultry meat and eggs, (1 - f * traded share of the cattle's or sheep's feed "
-                                 "protein, GLEAM 3) * ssr_i for bovine meat, dairy and mutton, f = imported "
+                                 "protein, GLEAM 3) * ssr_i for bovine meat, dairy and mutton, s_crop * ssr_i "
+                                 "for oil and beer (s_crop = P / (P + M) of the seed or barley), f = imported "
                                  "share of feed protein",
             },
         },
@@ -442,6 +501,13 @@ def export_ssr() -> None:
                     "flag": "jrc_group_only" if r.get("jrc_food") == "dairy" else (r.get("flag") or None),
                 }
             )
+        kc = (entry["indicators"].get("all") or {}).get("kcal") or {}
+        if kc.get("feed_ssr") is not None:
+            kc.update(headline_labels(items[items["iso3"] == iso3], entry["indicators"]))
+        if kc.get("withheld") and len(o):
+            tp = trace_pts(items[items["iso3"] == iso3], o.iloc[0].get("kcal_den"))
+            if tp is not None:
+                kc["withheld"]["trace_pts"] = _round(tp, 2)
         out["countries"][iso3] = entry
 
     dest = config.WEB_DATA / "ssr.json"
