@@ -394,6 +394,9 @@ def export_ssr() -> None:
             "elements": {k: config.FBS_ELEMENTS[k]
                          for k in ("production", "imports", "exports", "supply", "population",
                                    "stock_variation", "residuals")},
+            # The same elements as the FAOSTAT website names them (the steps send readers there).
+            "web_elements": {k: config.FBS_WEB_LABELS.get(k, config.FBS_ELEMENTS[k])
+                             for k in ("production", "imports", "exports", "supply")},
             "sources": sources(),
             # Countries without an FAO balance: their own statistic (mappings/national_stats.csv).
             "national": national_stats(years[-1] if years else None),

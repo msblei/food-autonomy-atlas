@@ -2571,8 +2571,14 @@ function jrcParts(id, group = state.group) {
 // Under each figure of a receipt: where exactly it comes from. FAO's element name where the figure
 // is FAO's sum; otherwise what was changed (docs/methodology.md: JRC replacements, dairy in milk
 // equivalent, the EU's trade with the rest of the world).
+// FAO's element names as the FAOSTAT website shows them (the steps send readers there; the data
+// file calls a few differently, meta.elements).
+function faoNames() {
+  return { ...state.data.meta.elements, ...state.data.meta.web_elements };
+}
+
 function sourceLabel(id, group = state.group) {
-  const el = state.data.meta.elements;
+  const el = faoNames();
   if (fromJrc(id, group)) return () => "in milk equivalent (European Commission)";
   const parts = jrcParts(id, group);
   const trade = (fao) => id === EU && (fao === el.imports || fao === el.exports);
@@ -2831,7 +2837,7 @@ function aboutFao() {
 
 function receiptGroup(id, v) {
   const comp = country(id)?.indicators?.[state.group]?.components_kt ?? {};
-  const el = state.data.meta.elements;
+  const el = faoNames();
   const jrc = fromJrc(id);
   const label = sourceLabel(id);
   const row = (label_, fao, val) => val == null ? ""
@@ -2932,7 +2938,8 @@ function receiptAll(id, v) {
 
 function checkYourself(id) {
   const s = state.data.meta.sources[state.data.meta.source];
-  const el = state.data.meta.elements;
+  const el = faoNames();
+  const file = state.data.meta.elements;
   const g = groupInfo();
   const parts = jrcParts(id);
   const items = state.group === "all"
@@ -2959,7 +2966,8 @@ function checkYourself(id) {
         The step for feed, and for the seeds and barley behind oil and beer, takes FAO's Supply Utilization
         Accounts, Feedipedia's protein contents and GLEAM's cattle diets, all listed under “How do we know?”, and gives ${Math.round(country(id).indicators.all.kcal.feed_ssr)}%.</p>` : ""}
     <p class="small">Or download the whole table:
-      <a href="${s.file_url}">FAO data file</a> (zip, ${s.size_mb ? `about ${s.size_mb} MB` : "large"}).</p>
+      <a href="${s.file_url}">FAO data file</a> (zip, ${s.size_mb ? `about ${s.size_mb} MB` : "large"})${file.production !== el.production
+        ? `, where “${el.production}” is called “${file.production}”` : ""}.</p>
     ${id === EU ? `<p class="aside">Our EU figures differ from FAO's own “European Union (27)” row on purpose.
       FAO adds up the member countries, but they report buying much more from each other than they
       report selling to each other${dairyGap()}, so the EU seems

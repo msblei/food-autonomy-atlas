@@ -311,6 +311,13 @@ test("how do we know: every source is credited with its licence", async ({ page 
   }
 });
 
+test("check it yourself: the steps use the FAOSTAT website's element names, the file's in a note", async ({ page }) => {
+  await open(page, "CHE/cereals/sources");
+  const steps = view(page).locator("ol.steps");
+  await expect(steps).toContainText("“Production Quantity”"); // the website's name (the file says “Production”)
+  await expect(view(page)).toContainText("where “Production Quantity” is called “Production”");
+});
+
 test("all food: countries are compared on the headline, the figure the map shows", async ({ page }) => {
   await open(page, "DEU");
   const cmp = view(page).locator("h3", { hasText: "compare?" }).locator("xpath=following-sibling::div[1]");

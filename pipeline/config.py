@@ -45,6 +45,10 @@ FBS_ELEMENTS: dict[str, str] = {
     "population": "Total Population - Both sexes",
 }
 
+# Where FAOSTAT's website names an element differently from its bulk file (the "Check it
+# yourself" steps send readers to the website; reported by the user 2026-11-07).
+FBS_WEB_LABELS: dict[str, str] = {"production": "Production Quantity"}
+
 # FAO's bulk catalogue: release date (DateUpdate) per file. Saved next to the raw ZIPs so export
 # can cite the exact release without going back to the network.
 FAOSTAT_CATALOGUE = "datasets_E.xml"
