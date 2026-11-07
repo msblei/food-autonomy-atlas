@@ -345,7 +345,11 @@ def extract() -> None:
 
     groups = load_item_groups()
     # Feed items (cakes, brans, grain) ride along in the same pass, for the EU's feed adjustment.
-    extra = {c: FEED_GROUP for c in feed.load_items() if c not in groups}
+    # The crops cakes are pressed from (`parent`) too: their imports from outside the EU set how
+    # home-grown a member's cake is (methodology, "Feed", "The EU as one"); linseed was missing.
+    fi = feed.load_items()
+    codes = set(fi) | {v["parent"] for v in fi.values() if v["parent"]}
+    extra = {c: FEED_GROUP for c in codes if c not in groups}
     raw = to_iso3(read_matrix(years, {**groups, **extra}, load_item_factors()))
     feed.eu_extra_shares(raw).to_parquet(config.INTERIM / feed.EU_EXTRA, index=False)
     both = yearly(raw[raw["group"] != FEED_GROUP])

@@ -13,6 +13,7 @@ import logging
 import sys
 
 from . import (
+    aquafeed,
     baci,
     comext,
     compute,
@@ -93,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         seasons.run()
         regions.run()
         comext.run_months(trade.fbs_window())
+        aquafeed.run()
         feed.run()
         feedcheck.run()
         scenario.run()
@@ -115,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         seasons.run()
         regions.run()
         comext.run_months(trade.fbs_window())
+        aquafeed.run()
         feed.run()
         feedcheck.run()
         scenario.run()

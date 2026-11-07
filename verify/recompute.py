@@ -652,6 +652,39 @@ def ruminant_shares():
     return dict(out)
 
 
+def fed_fish_shares(WIN):
+    """Methodology "Feed", "Farmed fish": {iso: {FBS fish item: fed farmed t / all t}} from FishStat
+    global production (tonnes live weight), species -> ISSCAAP group -> FBS item
+    (mappings/fish_isscaap.csv); fed = aquaculture source, a fed group, not silver or bighead carp."""
+    zp = ROOT / "data/raw/fishstat" / "GlobalProduction_2026.1.0.zip"
+    if not zp.exists():
+        return {}
+    grp = {r["isscaap_group"]: (r["fbs_item"], r["fed"] == "yes") for r in read_csv_comments(MAP / "fish_isscaap.csv")}
+    z = zipfile.ZipFile(zp)
+    with z.open("CL_FI_SPECIES_GROUPS.csv") as fh:
+        sp = pd.read_csv(fh, dtype=str, keep_default_na=False)
+    isscaap = dict(zip(sp["3A_Code"], sp["ISSCAAP_Group_En"]))
+    with z.open("Global_production_quantity.csv") as fh:
+        q = pd.read_csv(fh, dtype=str)
+    q["PERIOD"] = q["PERIOD"].astype(int)
+    q["VALUE"] = pd.to_numeric(q["VALUE"], errors="coerce").fillna(0.0)
+    q = q[(q["MEASURE"] == "Q_tlw") & q["PERIOD"].isin(WIN)]
+    g = q["SPECIES.ALPHA_3_CODE"].map(isscaap)
+    q = q[g.isin(grp)].assign(grp=g[g.isin(grp)])
+    q["item"] = q["grp"].map(lambda x: grp[x][0])
+    farmed = q["PRODUCTION_SOURCE_DET.CODE"].isin(["FRESHWATER", "BRACKISHWATER", "MARINE"])
+    fed = q["grp"].map(lambda x: grp[x][1]) & farmed & ~q["SPECIES.ALPHA_3_CODE"].isin(["SVC", "BIC"])
+    q["fed_t"] = q["VALUE"].where(fed, 0.0)
+    q["iso"] = q["COUNTRY.UN_CODE"].str.zfill(3).map(ALL_ISO)
+    q = q[q["iso"].notna()]
+    q = pd.concat([q, q[q["iso"].isin(EU)].assign(iso="EU27")], ignore_index=True)
+    s_ = q.groupby(["iso", "item"])[["VALUE", "fed_t"]].sum()
+    out = {}
+    for (iso, item), r in s_.iterrows():
+        out.setdefault(iso, {})[item] = min(1.0, r["fed_t"] / r["VALUE"]) if r["VALUE"] > 0 else 0.0
+    return out
+
+
 def feed_rows(res, D):
     """Methodology "Feed": {iso: (imported %, top [[item, %]], meat SSR, eggs SSR, items %, dairy SSR,
     c_cattle, c_small)}."""
@@ -667,10 +700,10 @@ def feed_rows(res, D):
                           "Value": pa.float64()})).to_pandas()
     WIN = D.WIN
     t = t[t["Year"].isin(WIN) & t["Item Code"].isin(codes) & (t["Unit"] == "t")
-          & t["Element"].isin(["Production", "Import quantity", "Feed"])]
+          & t["Element"].isin(["Production", "Import quantity", "Feed", "Other uses (non-food)"])]
     t["iso"] = t["Area Code (M49)"].str.lstrip("'").str.zfill(3).map(ALL_ISO)
     t = t[t["iso"].notna() & t["iso"].isin({c for c in WORLD.values()} | {e["iso3"] for e in EUROPE})]
-    el = {"Production": "P", "Import quantity": "M", "Feed": "F"}
+    el = {"Production": "P", "Import quantity": "M", "Feed": "F", "Other uses (non-food)": "O"}
     t["el"] = t["Element"].map(el)
     # EU: members' imports from outside the EU, per item and year, from the trade matrix
     tm = D.tm[D.tm["r"].isin(EU) & (D.tm["flow"] == "imports") & D.tm["p"].notna() & D.tm["item"].isin(codes)
@@ -685,7 +718,13 @@ def feed_rows(res, D):
     eu["iso"] = "EU27"
     t = pd.concat([t, eu], ignore_index=True)
     w = t.groupby(["iso", "Item Code", "el"])["Value"].sum().div(len(WIN)).unstack("el").reindex(
-        columns=["P", "M", "F"]).fillna(0.0)
+        columns=["P", "M", "F", "O"]).fillna(0.0)
+    # methodology "Feed", "Wheat gluten": item 24's non-food use is feed
+    gluten_o = {iso: v for (iso, c), v in w["O"].items() if c == 24}
+    is_gl = w.index.get_level_values("Item Code") == 24
+    w.loc[is_gl, "F"] = w.loc[is_gl, "F"] + w.loc[is_gl, "O"]
+    w = w.drop(columns="O")
+    fishfed = fed_fish_shares(WIN)
     out = {}
     for iso, sub in w.groupby(level="iso"):
         sub = sub.droplevel("iso")
@@ -728,8 +767,11 @@ def feed_rows(res, D):
             if "meat" in gr else math.nan
         eggs = ssr("eggs", (1 - f) * nz(gr["eggs"]["comp"]["P"])) if "eggs" in gr else math.nan
         dairy = ssr("dairy", (1 - f * cc) * nz(gr["dairy"]["comp"]["P"])) if "dairy" in gr else math.nan
+        ff = fishfed.get(iso, {})
+        fish = ssr("fish", nz(gr["fish"]["comp"]["P"]) - f * sum(a * p_item(i) for i, a in ff.items())) \
+            if "fish" in gr and any(a > 0 for a in ff.values()) else math.nan
         out[iso] = (100 * f, top, meat, eggs, 100 * sum(sub.at[c, "F"] for c in fed) / tot_t if tot_t > 0 else math.nan,
-                    dairy, 100 * cc_, 100 * cs_)
+                    dairy, 100 * cc_, 100 * cs_, fish, gluten_o.get(iso, 0.0), ff)
     return out
 
 
@@ -2140,7 +2182,7 @@ def main():
         def off(a, b):
             return (a is None) != (b is None or isnan(b)) or (a is not None and abs(a - b) > 0.05 + 1e-9)
         for k, mv in (("imported_pct", m_[0]), ("meat_ssr", m_[2]), ("eggs_ssr", m_[3]), ("items_pct", m_[4]),
-                      ("dairy_ssr", m_[5]), ("c_cattle", m_[6]), ("c_small", m_[7])):
+                      ("dairy_ssr", m_[5]), ("c_cattle", m_[6]), ("c_small", m_[7]), ("fish_ssr", m_[8])):
             if off(e.get(k), mv):
                 record("feed", {**w, "field": f"feed.{k}"}, e.get(k), None if isnan(mv) else round(mv, 1))
         counts["feed_top"] += 1
@@ -2164,6 +2206,21 @@ def main():
             return 1.0
         p_, m_ = nz(bal[c]["P"]), nz(bal[c]["M"])
         return 1.0 if p_ + m_ <= 0 else min(1.0, max(0.0, p_ / (p_ + m_)))
+
+    def gluten_g(bal, gluten_t):
+        """methodology "Wheat gluten": kt of wheat behind gluten used outside food."""
+        c = code_by_name.get("Wheat and products")
+        if c not in bal or not gluten_t > 0:
+            return 0.0
+        return max(0.0, min(12.5 * gluten_t / 1000, nz(bal[c]["other_uses"])))
+
+    def wheat_factor(bal, gluten_t):
+        """D / (D - g) for wheat, 1 without gluten or when D - g <= 0."""
+        c = code_by_name.get("Wheat and products")
+        g_ = gluten_g(bal, gluten_t)
+        if not g_ > 0 or c not in bal or not nz(bal[c]["D"]) - g_ > 0:
+            return 1.0
+        return nz(bal[c]["D"]) / (nz(bal[c]["D"]) - g_)
     for iso, c in sorted(ssr["countries"].items()):
         a_exp = c.get("indicators", {}).get("all")
         r = res.get(iso, {})
@@ -2182,12 +2239,16 @@ def main():
                 cs = 0.0 if isnan(m_[7]) else m_[7] / 100
 
                 bal_ = r.get("item_bal") or {}
+                ffed = m_[10]
+                wk = wheat_factor(bal_, m_[9])
 
                 def factor(code):  # methodology '"All food" coverage': which food rests on which feed or crop
                     nm = D.item_names.get(code) if code is not None else "dairy"
                     return (1 - f if nm in adj_names else 1 - f * cc if nm in ("Bovine Meat", "dairy")
                             else 1 - f * cs if nm == "Mutton & Goat Meat"
-                            else s_crop(bal_, nm) if nm in made_from else 1.0)
+                            else s_crop(bal_, nm) if nm in made_from
+                            else 1 - f * ffed[nm] if ffed.get(nm, 0) > 0
+                            else wk if nm == "Wheat and products" else 1.0)
                 foods = [(fd[0] * factor(code), fd[wi]) for code, fd, _ in r["all"]["foods_a"]]
                 den = sum(w_ for _, w_ in foods)
                 if den > 0:
@@ -2237,6 +2298,23 @@ def main():
                 if (e is None) != (tp is None) or (e is not None and abs(e - tp) > 0.005 + 1e-9):
                     record("all_trace", {"file": "ssr.json", "country": iso, "group": "all",
                                          "field": "kcal.withheld.trace_pts"}, e, None if tp is None else round(tp, 2))
+                # methodology: the most taking gluten's wheat out of wheat's use can raise it
+                rp = None
+                cw = code_by_name.get("Wheat and products")
+                g_ = gluten_g(bal_, m_[9]) if m_ is not None else 0.0
+                if g_ > 0 and den_a > 0 and cw in bal_ and nz(bal_[cw]["kcal"]) > 0 and nz(bal_[cw]["D"]) - g_ > 0:
+                    it = bal_[cw]
+                    v = own_ssr.get(cw)
+                    if v is None:
+                        d_ = max(nz(it["D"]), nz(it["food"]), 0.0)
+                        v = 100 * nz(it["P"]) / d_ if d_ > 0 else None
+                    if v is not None:
+                        rp = nz(it["kcal"]) * v * (nz(it["D"]) / (nz(it["D"]) - g_) - 1) / den_a
+                e = (a_exp.get("kcal", {}).get("withheld") or {}).get("raise_pts")
+                counts["all_raise"] += 1
+                if (e is None) != (not rp) or (e is not None and rp and abs(e - rp) > 0.005 + 1e-9):
+                    record("all_raise", {"file": "ssr.json", "country": iso, "group": "all",
+                                         "field": "kcal.withheld.raise_pts"}, e, None if not rp else round(rp, 2))
             for k, mv in mine.items():
                 e = a_exp.get(b, {}).get(k)
                 counts["all_feed"] += 1

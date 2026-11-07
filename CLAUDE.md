@@ -31,7 +31,8 @@ Updating the data (what changes when, the manual JRC step, versions, review list
   ratios.
 - **Headline ("all food"):** calories, counting meat, milk and eggs only for home-grown feed
   (pigs and poultry for all feed, cattle, sheep and goats for their traded feed, GLEAM 3), and
-  oil and beer only for home-grown seeds and barley (2026-11-06)
+  oil and beer only for home-grown seeds and barley, farmed fish for home-grown feed, wheat
+  without the wheat FAO books for gluten used outside food (all 2026-11-06)
   (`kcal.feed_ssr`), one figure for map, tooltip, panel and rankings. The capped "today's menu"
   figure, protein and the unadjusted figures stay on "All the numbers" only (one figure in the UI,
   user's decision 2026-10-18). (Changed from uncapped protein on 2026-10-18 after an
@@ -52,7 +53,8 @@ Updating the data (what changes when, the manual JRC step, versions, review list
 - **Licensing:** default stack is open-licensed (FAOSTAT CC BY 4.0, Eurostat/Comext, BACI Etalab
   2.0, Natural Earth public domain; typeface Atkinson Hyperlegible Next, SIL OFL, self-hosted, map
   label glyphs in `web/public/fonts` built by `npm run glyphs`). GISCO NUTS boundaries are non-commercial only — fine for now,
-  swap for Natural Earth / geoBoundaries if the project ever goes commercial. Never redistribute raw
+  swap for Natural Earth / geoBoundaries if the project ever goes commercial; FAO FishStat (farmed
+  fish shares) is CC BY-NC-SA 3.0 IGO, the same caveat. Never redistribute raw
   UN Comtrade extracts.
 
 ## Repository layout
@@ -135,6 +137,7 @@ make serve       # cd web && npm run dev
 | Bilateral trade (HS6, reconciled) | CEPII BACI, HS 2017 edition, release 202601 | `https://www.cepii.fr/DATA_DOWNLOAD/baci/data/BACI_HS17_V202601.zip` (`atlas download --source baci`, 795 MB, kept zipped) | Etalab 2.0, cite Gaulier & Zignago (2010). ~1-year lag. Fish partners outside the EU (live weight with the EU's EUMOFA mix per HS6); other foods only compared with the FAO matrix (`pipeline/baci.py`). A new release renames the file: update `config.SOURCES` and `baci.RELEASE` |
 | EU balances (dairy, tomatoes, olive oil, wine) | DG AGRI–JRC "EU estimated agricultural balance sheets" | browser download only (`atlas download --source jrc` prints steps) → `data/raw/jrc/` | EC reuse notice (attribution). Intra-EU trade counted once, processed goods converted back; replaces FAO for EU dairy, tomatoes, olive oil, wine (`pipeline/jrc.py`, comparison in methodology) |
 | Cattle, sheep and goat diets (traded share of their feed) | FAO GLEAM 3 (reference year 2015), dashboard "Input data" → "Dry Matter Intake" per country and species | `mappings/gleam_feed_intake.csv`, read from `https://foodandagricultureorganization.shinyapps.io/GLEAMV3_Public/` in a browser (docs/updating.md); crude protein per category in `mappings/gleam_feed_protein.csv` | CC BY 4.0 (the dashboard's own terms, read 2026-10-19; cite "FAO. 2022. GLEAM 3 Dashboard. In: Shiny Apps"). Beef, milk, mutton counted only for the home-grown share of their traded feed (`pipeline/feed.py`) |
+| Farmed fish on feed (share of each country's fish) | FAO FishStat, global production by production source (capture, aquaculture) | `https://www.fao.org/fishery/static/Data/GlobalProduction_2026.1.0.zip` (`atlas download --source fishstat`, 6 MB) | CC BY-NC-SA 3.0 IGO (non-commercial, share-alike; like GISCO, swap or drop if the project goes commercial). Species → FBS fish items via ISSCAAP groups (`mappings/fish_isscaap.csv`); fed = farmed, not filter feeders; farmed fish counted for home-grown feed like pigs (`pipeline/aquafeed.py`). A new release renames the file: update `config.SOURCES` |
 | Countries without an FBS (Japan) | MAFF food self-sufficiency ratio, calorie basis | `mappings/national_stats.csv`, typed from `https://www.maff.go.jp/j/zyukyu/zikyu_ritu/012.html` (docs/updating.md) | Government of Japan Standard Terms of Use 2.0 (CC BY 4.0 compatible). Shown in place of a blank, never ranked with FAO-based figures |
 | Second opinion on FBS (cereals, oilseeds, oils, sugar, meat, butter, coffee) | USDA FAS PSD | `https://apps.fas.usda.gov/psdonline/downloads/psd_alldata_csv.zip` (`atlas download --source usda`) | US government work, public domain. EU only as a bloc. Compared, never substituted: `pipeline/usda.py`; large gaps shown next to FAO's figure |
 | Second opinion on imported feed protein (EU) | DG AGRI "EU feed protein balance sheet" | `https://agriculture.ec.europa.eu/document/download/67d303ed-196f-47df-905f-0ac3866610e5_en?filename=eu-feed-protein-balance-sheet_en.xlsx` (`atlas download --source dgagri`) | Commission reuse notice (attribution). One sheet per marketing year (July–June); compared, never substituted, without roughage (FAO has none): `pipeline/feedcheck.py`, audit page; a gap over 10 points is a warning |

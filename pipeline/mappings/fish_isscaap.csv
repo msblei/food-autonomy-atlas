@@ -1,0 +1,57 @@
+# FishStat ISSCAAP groups -> FBS fish item, and whether farmed animals of the group are fed
+# (pipeline/aquafeed.py; methodology, "Farmed fish"). FBS items follow FAO's food balance
+# grouping of ISSCAAP divisions (freshwater and diadromous fish; demersal; pelagic; other marine;
+# crustaceans; cephalopods; other molluscs; other aquatic animals; aquatic mammals; aquatic
+# plants). `fed`: yes = farmed animals eat feed (fish, crustaceans, frogs and turtles); no =
+# FAO's non-fed aquaculture (bivalves and other molluscs, seaweeds and aquatic plants,
+# echinoderms and other invertebrates). Silver and bighead carp, filter feeders, are non-fed
+# species within a fed group (aquafeed.NON_FED_SPECIES). Corals, sponges and pearls are no food
+# and have no row.
+isscaap_group,fbs_item,fed
+"Carps, barbels and other cyprinids",Freshwater Fish,yes
+Tilapias and other cichlids,Freshwater Fish,yes
+Miscellaneous freshwater fishes,Freshwater Fish,yes
+"Sturgeons, paddlefishes",Freshwater Fish,yes
+River eels,Freshwater Fish,yes
+"Salmons, trouts, smelts",Freshwater Fish,yes
+Shads,Freshwater Fish,yes
+Miscellaneous diadromous fishes,Freshwater Fish,yes
+"Flounders, halibuts, soles",Demersal Fish,yes
+"Cods, hakes, haddocks",Demersal Fish,yes
+Miscellaneous coastal fishes,Demersal Fish,yes
+Miscellaneous demersal fishes,Demersal Fish,yes
+"Herrings, sardines, anchovies",Pelagic Fish,yes
+"Tunas, bonitos, billfishes",Pelagic Fish,yes
+Miscellaneous pelagic fishes,Pelagic Fish,yes
+"Sharks, rays, chimaeras","Marine Fish, Other",yes
+Marine fishes not identified,"Marine Fish, Other",yes
+Freshwater crustaceans,Crustaceans,yes
+"Crabs, sea-spiders",Crustaceans,yes
+"Lobsters, spiny-rock lobsters",Crustaceans,yes
+"King crabs, squat-lobsters",Crustaceans,yes
+"Shrimps, prawns",Crustaceans,yes
+"Krill, planktonic crustaceans",Crustaceans,yes
+Miscellaneous marine crustaceans,Crustaceans,yes
+"Squids, cuttlefishes, octopuses",Cephalopods,yes
+Freshwater molluscs,"Molluscs, Other",no
+"Abalones, winkles, conchs","Molluscs, Other",no
+Oysters,"Molluscs, Other",no
+Mussels,"Molluscs, Other",no
+"Scallops, pectens","Molluscs, Other",no
+"Clams, cockles, arkshells","Molluscs, Other",no
+Miscellaneous marine molluscs,"Molluscs, Other",no
+Frogs and other amphibians,"Aquatic Animals, Others",yes
+Turtles,"Aquatic Animals, Others",yes
+Crocodiles and alligators,"Aquatic Animals, Others",yes
+Sea-squirts and other tunicates,"Aquatic Animals, Others",no
+Sea-urchins and other echinoderms,"Aquatic Animals, Others",no
+Miscellaneous aquatic invertebrates,"Aquatic Animals, Others",no
+Horseshoe crabs and other arachnoids,"Aquatic Animals, Others",no
+"Blue-whales, fin-whales","Meat, Aquatic Mammals",no
+"Sperm-whales, pilot-whales","Meat, Aquatic Mammals",no
+"Eared seals, hair seals, walruses","Meat, Aquatic Mammals",no
+Miscellaneous aquatic mammals,"Meat, Aquatic Mammals",no
+Brown seaweeds,Aquatic Plants,no
+Red seaweeds,Aquatic Plants,no
+Green seaweeds,Aquatic Plants,no
+Miscellaneous aquatic plants,Aquatic Plants,no

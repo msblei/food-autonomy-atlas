@@ -24,7 +24,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.csv as pacsv
 
-from . import config
+from . import aquafeed, config
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +33,14 @@ SUA_CSV = "SUA_Crops_Livestock_E_All_Data_(Normalized).csv"
 EU_EXTRA = "eu_feed_extra.parquet"
 OUT = "feed.parquet"
 EU_ITEMS = "feed_eu_items.parquet"  # the EU's items, for the comparison with DG AGRI (feedcheck.py)
-ELEMENTS = {"Production": "P", "Import quantity": "M", "Feed": "F"}
+ELEMENTS = {"Production": "P", "Import quantity": "M", "Feed": "F", "Other uses (non-food)": "O"}
+# Fed to animals although FAO books it as a non-food use (methodology, "Feed", "Wheat gluten"):
+# its non-food use counts as feed. Norway's salmon feed: 209 kt of gluten a year, 0 kt as "Feed".
+NONFOOD_AS_FEED = {24}  # Wheat gluten
+# FAO's food balance turns wheat gluten back into wheat at 12.5 t of wheat per t (8% extraction):
+# Norway's "Wheat and products" non-food use is 12.5 x its gluten's in every year 2021-2023.
+GLUTEN_WHEAT = 12.5
+GLUTEN_CODE, WHEAT_ITEM = 24, "Wheat and products"
 
 
 def load_items() -> dict[int, dict]:
@@ -47,7 +54,9 @@ def eu_extra_shares(raw: pd.DataFrame) -> pd.DataFrame:
     """Per feed item and year: the share of EU members' reported imports (tonnes) that come from
     outside the EU (trade matrix rows as read by trade.read_matrix, ISO3 already)."""
     items = load_items()
-    m = raw[raw["item_code"].isin(items) & (raw["flow"] == "imports") & raw["reporter"].isin(config.EU27)]
+    # the crops cakes are pressed from as well: their share sets how home-grown a cake is
+    codes = set(items) | {v["parent"] for v in items.values() if v["parent"]}
+    m = raw[raw["item_code"].isin(codes) & (raw["flow"] == "imports") & raw["reporter"].isin(config.EU27)]
     m = m.assign(extra=m["value"].where(~m["partner"].isin(config.EU27), 0.0))
     g = m.groupby(["item_code", "year"], as_index=False)[["extra", "value"]].sum()
     g = g[g["value"] > 0]
@@ -141,11 +150,40 @@ def traded_share() -> pd.DataFrame:
     return share.rename(columns={"cattle": "c_cattle", "small": "c_small"}).reindex(columns=["c_cattle", "c_small"])
 
 
-def all_food(f: float, items: pd.DataFrame, total: pd.Series, cc: float = 0.0, cs: float = 0.0) -> dict:
-    """"All food" with SSR_i' = factor_i * SSR_i: 1 - f for ADJUSTED_ITEMS, 1 - f*c_cattle for beef and
-    dairy (as one food, compute.overall's dairy_*), 1 - f*c_small for mutton and goat meat, s_crop
-    for oil and beer (MADE_FROM, crop_shares); against
-    the same items and weights as compute.overall (its `{w}_den`, reading A)."""
+def gluten_wheat_kt(items: pd.DataFrame, gluten_t: float) -> float:
+    """The wheat FAO's balance books for gluten used outside food (kt): GLUTEN_WHEAT x the gluten's
+    non-food use, at most the wheat's own non-food use."""
+    w = items[items["item"] == WHEAT_ITEM]
+    if w.empty or not gluten_t > 0:
+        return 0.0
+    other = w["other_uses"].iloc[0]
+    return max(0.0, min(GLUTEN_WHEAT * gluten_t / 1000, 0.0 if pd.isna(other) else float(other)))
+
+
+def factors(f: float, items: pd.DataFrame, cc: float = 0.0, cs: float = 0.0,
+            fish: dict | None = None, gluten_kt: float = 0.0) -> dict[str, float]:
+    """Item -> factor on its SSR in "all food" (dairy, one food, is handled by all_food): 1 - f for
+    ADJUSTED_ITEMS, 1 - f*c_cattle for beef, 1 - f*c_small for mutton and goat meat, s_crop for oil
+    and beer (MADE_FROM), 1 - f*a for fish items with a share a farmed on feed (aquafeed), and
+    D / (D - g) for wheat, g the wheat behind gluten used outside food."""
+    k = {i: 1 - f for i in ADJUSTED_ITEMS}
+    k |= {i: 1 - f * cc for i in CATTLE_ITEMS} | {i: 1 - f * cs for i in SMALL_ITEMS}
+    k |= {i: s for i, s in crop_shares(items).items() if s < 1}
+    k |= {i: 1 - f * a for i, a in (fish or {}).items() if a > 0}
+    w = items[items["item"] == WHEAT_ITEM]
+    if gluten_kt > 0 and len(w):
+        d = w["supply"].iloc[0]
+        if pd.notna(d) and d - gluten_kt > 0:
+            k[WHEAT_ITEM] = d / (d - gluten_kt)
+    return k
+
+
+def all_food(f: float, items: pd.DataFrame, total: pd.Series, cc: float = 0.0, cs: float = 0.0,
+             fish: dict | None = None, gluten_kt: float = 0.0) -> dict:
+    """"All food" with SSR_i' = factor_i * SSR_i (`factors`), dairy (as one food, compute.overall's
+    dairy_*) at 1 - f*c_cattle; against the same items and weights as compute.overall (its
+    `{w}_den`, reading A)."""
+    k_of = factors(f, items, cc, cs, fish, gluten_kt)
     out = {}
     for w in ("protein", "kcal"):
         keys = [f"{w}_feed_ssr", f"{w}_feed_share"]
@@ -153,11 +191,8 @@ def all_food(f: float, items: pd.DataFrame, total: pd.Series, cc: float = 0.0, c
         if str(total.get(f"{w}_flag") or "") != "" or pd.isna(den) or not den > 0 or pd.isna(ssr):
             out.update(dict.fromkeys(keys, np.nan))
             continue
-        a = items[items["ssr"].notna() & (items[w] > 0)]
-        parts = [(a[a["item"].isin(ADJUSTED_ITEMS)], 1 - f), (a[a["item"].isin(CATTLE_ITEMS)], 1 - f * cc),
-                 (a[a["item"].isin(SMALL_ITEMS)], 1 - f * cs)]
-        parts += [(a[a["item"] == made], s) for made, s in crop_shares(items).items() if s < 1]
-        terms = [(r[w], r["ssr"], k) for sub, k in parts for _, r in sub.iterrows()]
+        a = items[items["ssr"].notna() & (items[w] > 0) & items["item"].isin(list(k_of))]
+        terms = [(r[w], r["ssr"], k_of[r["item"]]) for _, r in a.drop_duplicates("item").iterrows()]
         dw, ds = total.get(f"dairy_{w}"), total.get("dairy_ssr")
         if pd.notna(dw) and dw > 0 and pd.notna(ds):
             terms.append((dw, ds, 1 - f * cc))
@@ -190,7 +225,13 @@ def compute(years: tuple[int, int], groups: pd.DataFrame, items_fbs: pd.DataFram
     eu = eu.groupby(["item_code", "element", "year"], as_index=False)["t"].sum().assign(iso3="EU27")
     all_ = pd.concat([sua, eu], ignore_index=True)
     w = all_.groupby(["iso3", "item_code", "element"])["t"].sum().div(n).unstack("element").reindex(
-        columns=["P", "M", "F"]).fillna(0.0)
+        columns=["P", "M", "F", "O"]).fillna(0.0)
+    # gluten FAO books as non-food: wheat it stands for in the food balance (kt), then counted as feed
+    gl = w.xs(GLUTEN_CODE, level="item_code")["O"] if GLUTEN_CODE in w.index.get_level_values("item_code") else pd.Series(dtype=float)
+    nonfood = w.index.get_level_values("item_code").isin(list(NONFOOD_AS_FEED))
+    w.loc[nonfood, "F"] = w.loc[nonfood, "F"] + w.loc[nonfood, "O"]
+    w = w.drop(columns="O")
+    fish_fed = aquafeed.load()
     have = w["P"] + w["M"]
     own = (w["P"] / have.where(have > 0)).fillna(1.0).clip(0, 1)
 
@@ -239,13 +280,19 @@ def compute(years: tuple[int, int], groups: pd.DataFrame, items_fbs: pd.DataFram
                    if (iso3, "meat") in g.index else np.nan)
         dairy = ssr("dairy", (1 - f * cc) * g.loc[(iso3, "dairy"), "production"]) if (iso3, "dairy") in g.index else np.nan
         eggs = ssr("eggs", (1 - f) * g.loc[(iso3, "eggs"), "production"] if (iso3, "eggs") in g.index else np.nan)
+        # farmed fish on feed (aquafeed): the fish group counting them only for home-grown feed
+        ff = fish_fed.get(iso3, {})
+        fish = ssr("fish", g.loc[(iso3, "fish"), "production"] - f * sum(a * p(i) for i, a in ff.items())) \
+            if (iso3, "fish") in g.index and any(a > 0 for a in ff.values()) else np.nan
+        mine = items_fbs[items_fbs["iso3"] == iso3]
+        gkt = gluten_wheat_kt(mine, float(gl.get(iso3, 0.0)))
         row = {"iso3": iso3, "imported_pct": 100 * f, "top": json.dumps(top), "meat_ssr": meat, "eggs_ssr": eggs,
-               "dairy_ssr": dairy,
+               "dairy_ssr": dairy, "fish_ssr": fish, "gluten_wheat_kt": gkt,
                "c_cattle": 100 * ts.at[iso3, "c_cattle"] if iso3 in ts.index else np.nan,
                "c_small": 100 * ts.at[iso3, "c_small"] if iso3 in ts.index else np.nan,
                "items_pct": 100 * fed["F"].sum() / tot_t if tot_t > 0 else np.nan}
         if overall is not None and iso3 in overall.index:
-            row.update(all_food(f, items_fbs[items_fbs["iso3"] == iso3], overall.loc[iso3], cc, cs))
+            row.update(all_food(f, mine, overall.loc[iso3], cc, cs, ff, gkt))
         rows.append(row)
     return pd.DataFrame(rows)
 

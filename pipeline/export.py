@@ -339,6 +339,32 @@ def trace_pts(items: pd.DataFrame, den: float) -> float | None:
     return total
 
 
+def _reading_ssr(r: pd.Series) -> float:
+    """An item's own SSR, or reading B's P / max(D, food, 0) where FAO's contradicts itself."""
+    if pd.notna(r["ssr"]):
+        return float(r["ssr"])
+    d = max(r["supply"] if pd.notna(r["supply"]) else 0.0, r["food"] if pd.notna(r["food"]) else 0.0, 0.0)
+    return 100 * (r["production"] if pd.notna(r["production"]) else 0.0) / d if d > 0 else float("nan")
+
+
+def raise_pts(items: pd.DataFrame, den: float, gluten_kt: float) -> float | None:
+    """The most that taking the wheat behind gluten used outside food out of wheat's use
+    (feed.factors) can raise a withheld "all food" kcal reading, in points (methodology, "Withheld
+    foods on the map"): kcal_wheat * SSR_wheat * (D / (D - g) - 1) / den, den = reading A's calories."""
+    from .feed import WHEAT_ITEM
+
+    if not gluten_kt > 0 or not den or not den > 0:
+        return None
+    w = items[items["item"] == WHEAT_ITEM].drop_duplicates("item")
+    if w.empty:
+        return None
+    r = w.iloc[0]
+    d, ssr = r["supply"], _reading_ssr(r)
+    if not (pd.notna(d) and d - gluten_kt > 0 and r["kcal"] > 0) or pd.isna(ssr):
+        return None
+    return float(r["kcal"]) * ssr * (d / (d - gluten_kt) - 1) / den
+
+
 def export_ssr() -> None:
     m = config.MAPPINGS
     for name in ("groups", "items", "overall", "trends"):
@@ -413,7 +439,8 @@ def export_ssr() -> None:
             r = feed.loc[iso3]
             entry["feed"] = {"imported_pct": _round(r["imported_pct"]), "top": json.loads(r["top"]),
                              "meat_ssr": _round(r["meat_ssr"]), "eggs_ssr": _round(r["eggs_ssr"]),
-                             "dairy_ssr": _round(r.get("dairy_ssr")), "c_cattle": _round(r.get("c_cattle")),
+                             "dairy_ssr": _round(r.get("dairy_ssr")), "fish_ssr": _round(r.get("fish_ssr")),
+                             "c_cattle": _round(r.get("c_cattle")),
                              "c_small": _round(r.get("c_small")),
                              "items_pct": _round(r["items_pct"])}
         entry.update({"view": "eu_bloc" if iso3 == EU_BLOC else "national",
@@ -508,6 +535,10 @@ def export_ssr() -> None:
             tp = trace_pts(items[items["iso3"] == iso3], o.iloc[0].get("kcal_den"))
             if tp is not None:
                 kc["withheld"]["trace_pts"] = _round(tp, 2)
+            gk = float(feed.loc[iso3, "gluten_wheat_kt"]) if iso3 in feed.index and "gluten_wheat_kt" in feed else 0.0
+            rp = raise_pts(items[items["iso3"] == iso3], o.iloc[0].get("kcal_den"), gk)
+            if rp:
+                kc["withheld"]["raise_pts"] = _round(rp, 2)
         out["countries"][iso3] = entry
 
     dest = config.WEB_DATA / "ssr.json"

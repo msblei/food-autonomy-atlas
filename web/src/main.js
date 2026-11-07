@@ -1034,7 +1034,9 @@ function robustPct(id, group = state.group) {
   const trace = all ? (country(id)?.indicators?.all?.kcal?.withheld?.trace_pts ?? 0) : 0;
   const lo = r[0] * (1 - f / 100) - trace;
   if (lo >= SEASONS[4].max) return lo;
-  if (r[1] < SEASONS[0].max) return r[1];
+  // ... and taking gluten's wheat out of wheat's use raises it by at most raise_pts
+  const hi = r[1] + (all ? (country(id)?.indicators?.all?.kcal?.withheld?.raise_pts ?? 0) : 0);
+  if (hi < SEASONS[0].max) return hi;
   return null;
 }
 
@@ -1945,11 +1947,12 @@ function foodList(id) {
 function feedListNote(id) {
   const f = country(id)?.feed;
   if (!f) return "";
-  const parts = [["meat", f.meat_ssr], ["eggs", f.eggs_ssr], ["dairy", f.dairy_ssr]]
+  const parts = [["meat", f.meat_ssr], ["eggs", f.eggs_ssr], ["dairy", f.dairy_ssr], ["fish", f.fish_ssr]]
     .filter(([g, v]) => v != null && pctFor(id, g) != null && Math.abs(pctFor(id, g) - v) >= 0.5)
     .map(([g, v]) => `${g} ${lasts(v, { short: true })}`);
   if (!parts.length) return "";
-  return `<p class="small">Meat, eggs and dairy above count every animal raised here. Counting only home-grown feed,
+  const what = f.fish_ssr != null && pctFor(id, "fish") != null ? "Meat, eggs, dairy and fish" : "Meat, eggs and dairy";
+  return `<p class="small">${what} above count every animal raised here. Counting only home-grown feed,
     as the sum at the top does: ${listOf(parts)} (each food's page shows both).</p>`;
 }
 
@@ -2357,19 +2360,21 @@ const feedName = (item) => FEED_NAMES[item] ?? item.toLowerCase();
 
 function feedNote(id) {
   const f = country(id)?.feed;
-  if (!f || f.imported_pct == null || !["meat", "eggs", "dairy"].includes(state.group)) return "";
+  if (!f || f.imported_pct == null || !["meat", "eggs", "dairy", "fish"].includes(state.group)) return "";
+  // fish: only where some of it is farmed on feed (aquafeed), else the feed says nothing about it
+  if (state.group === "fish" && f.fish_ssr == null) return "";
   const who = id === EU ? "the EU" : nameOf(id);
   const share = `<strong>${Math.round(f.imported_pct)}%</strong> of the protein in ${id === EU ? "the EU's" : `${who}'s`} animal feed
     other than grass and hay is bought ${id === EU ? "outside the EU" : "abroad"}${f.top.length ? `, mostly ${namesOf(f.top.map(([n]) => feedName(n)))}` : ""}.`;
-  const v = state.group === "meat" ? f.meat_ssr : state.group === "eggs" ? f.eggs_ssr : f.dairy_ssr;
+  const v = { meat: f.meat_ssr, eggs: f.eggs_ssr, dairy: f.dairy_ssr, fish: f.fish_ssr }[state.group];
   if (v == null) return `<h3>Feed from abroad</h3><p class="small">${share}</p>`;
   // Cattle: GLEAM's share of their protein from bought feed (grain, meal), the rest grass and silage.
   const cows = f.c_cattle != null ? ` Cattle get about <strong>${Math.round(f.c_cattle)}%</strong> of their protein
     from such feed, the rest from grass and silage.` : "";
-  const animals = state.group === "eggs" ? "hens" : state.group === "dairy" ? "cows" : "the animals";
+  const animals = { eggs: "hens", dairy: "cows", fish: "farmed fish" }[state.group] ?? "the animals";
   return `
     <h3>Feed from abroad</h3>
-    <p class="small">${share}${state.group === "eggs" ? "" : cows}</p>
+    <p class="small">${share}${["eggs", "fish"].includes(state.group) ? "" : cows}</p>
     <p>Counting ${animals} only for the feed grown ${id === EU ? "in the EU" : "at home"},
       ${id === EU ? "the EU's" : "its"} own ${food()} would last <strong>${forHowLong(v)}</strong>.</p>`;
 }
@@ -2604,8 +2609,8 @@ function viewAbout() {
     <h3>The sum</h3>
     <p>For each country and food we divide what is produced there (farmed, fished or made, like wine) by what the
       country uses, then turn that share into months of the year: 85% of 12 months is about
-      10 months. All food together is counted in calories, with pork, chicken and eggs counted only as far
-      as the animals' feed was grown in the country, and oil and beer only as far as their seeds and barley
+      10 months. All food together is counted in calories, with pork, chicken, eggs and farmed fish counted only
+      as far as the animals' feed was grown in the country, and oil and beer only as far as their seeds and barley
       were. Choose a country to see its own figures worked out.</p>
     <p>All food is counted the way people eat it: each food weighs as much as the calories people get from it.
       Grain and soy fed to animals count as the meat, milk and eggs they become, and crops made into fuel, or
@@ -2913,7 +2918,8 @@ function receiptAll(id, v) {
     ${f?.imported_pct != null ? `<p>Pigs and chickens live on grain and oilseed meal, not grass. <strong>${Math.round(f.imported_pct)}%</strong>
       of the protein in feed other than grass and hay ${where} comes from abroad, so pork, chicken and eggs count
       only for the rest. Cattle and sheep live mostly on grass, so beef, lamb and milk lose only the imported
-      share of the grain and meal they get besides it. Oil and beer count only as far as their seeds and
+      share of the grain and meal they get besides it. Farmed fish such as salmon count only for the home-grown
+      share of their feed, as pigs and chickens do. Oil and beer count only as far as their seeds and
       barley were grown ${id === EU ? "in the EU" : "in the country"}, not where they were pressed or brewed.
       That gives <strong>${Math.round(v)}%</strong>.</p>` : ""}
     ${inMonths(id, v)}

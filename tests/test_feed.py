@@ -8,7 +8,7 @@ from pipeline import feed
 
 def test_feed_table_is_plausible():
     items = feed.load_items()
-    assert all(0 < v["protein"] < 0.7 for v in items.values())
+    assert all(0 < v["protein"] < 0.85 for v in items.values())  # wheat gluten, the richest, 75%
     assert items[238]["parent"] == 236  # soy cake is made from soybeans
     assert all(v["parent"] is None or v["parent"] != k for k, v in items.items())
 
@@ -98,3 +98,31 @@ def test_oil_and_beer_count_only_for_the_home_grown_share_of_their_crop():
     assert out["kcal_feed_share"] == pytest.approx((min(0.25 * 200, 100) * 100 + 100 * 100 + 90 * 200) / den)
     # the oil's calories from imported beans count as bought abroad
     assert out["kcal_imports"] == pytest.approx(0.75 * 200 * 100 / 100)
+
+
+def test_farmed_fish_and_gluten_wheat_factors():
+    # methodology, "Farmed fish" and "Wheat gluten": salmon all farmed on feed counts for 1 - f;
+    # wild cod not at all; wheat counts without the wheat FAO books for gluten used outside food
+    items = pd.DataFrame([
+        {"item": "Freshwater Fish", "supply": 100.0, "other_uses": 0.0, "production": 1500.0, "imports": 0.0},
+        {"item": "Demersal Fish", "supply": 600.0, "other_uses": 0.0, "production": 1300.0, "imports": 70.0},
+        {"item": "Wheat and products", "supply": 3600.0, "other_uses": 2600.0, "production": 270.0, "imports": 3300.0},
+    ])
+    g = feed.gluten_wheat_kt(items, 209_000.0)
+    assert g == pytest.approx(2600.0)  # 12.5 x 209 kt = 2612 kt, capped at the wheat's own non-food use
+    assert feed.gluten_wheat_kt(items, 100_000.0) == pytest.approx(1250.0)
+    k = feed.factors(0.7, items, fish={"Freshwater Fish": 1.0, "Demersal Fish": 0.0}, gluten_kt=g)
+    assert k["Freshwater Fish"] == pytest.approx(0.3)
+    assert "Demersal Fish" not in k
+    assert k["Wheat and products"] == pytest.approx(3600 / 1000)
+
+
+def test_fish_mapping_covers_every_fbs_fish_item_and_marks_filter_feeders():
+    from pipeline import aquafeed
+
+    m = aquafeed.mapping()
+    assert set(m["fbs_item"]) >= {"Freshwater Fish", "Demersal Fish", "Pelagic Fish", "Marine Fish, Other",
+                                  "Crustaceans", "Cephalopods", "Molluscs, Other", "Aquatic Animals, Others"}
+    assert not m.loc[m["isscaap_group"].isin(["Mussels", "Oysters", "Red seaweeds"]), "fed"].any()
+    assert m.loc[m["isscaap_group"] == "Salmons, trouts, smelts", "fed"].all()
+    assert {"SVC", "BIC"} <= set(aquafeed.NON_FED_SPECIES)

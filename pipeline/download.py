@@ -127,6 +127,14 @@ def usda(*, force: bool = False) -> list[Path]:
     return [fetch(url, config.RAW / "usda" / url.rsplit("/", 1)[1], force=force)]
 
 
+def fishstat(*, force: bool = False) -> list[Path]:
+    """FAO FishStat global production by source (~20 MB): the farmed share of each country's fish,
+    for the feed of farmed fish (pipeline/aquafeed.py). A new release renames the file: update
+    config.SOURCES["fao_fishstat"]."""
+    url = config.SOURCES["fao_fishstat"]["file_url"]
+    return [fetch(url, config.RAW / "fishstat" / url.rsplit("/", 1)[1], force=force)]
+
+
 def dgagri(*, force: bool = False) -> list[Path]:
     """DG AGRI's EU feed protein balance sheet (~0.6 MB): a second opinion on the EU's imported
     feed protein (pipeline/feedcheck.py)."""
@@ -341,6 +349,7 @@ ALL = {
     "baci": baci,
     "jrc": jrc,
     "usda": usda,
+    "fishstat": fishstat,
     "dgagri": dgagri,
     "unsd": unsd,
     "eumofa": eumofa,
@@ -353,7 +362,7 @@ ALL = {
 
 def run(sources: list[str] | None = None, *, force: bool = False) -> None:
     config.ensure_dirs()
-    sources = sources or ["faostat", "eurostat", "boundaries", "usda", "dgagri", "comext", "baci", "seasons", "cropmap"]
+    sources = sources or ["faostat", "eurostat", "boundaries", "usda", "fishstat", "dgagri", "comext", "baci", "seasons", "cropmap"]
     for name in sources:
         fn = ALL[name]
         log.info("== %s", name)

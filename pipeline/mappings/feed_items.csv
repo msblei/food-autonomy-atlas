@@ -34,6 +34,8 @@ item_code,item,protein_pct,parent
 75,Oats,10.5,
 259,Cake of palm kernel,15.0,256
 846,Gluten feed and meal,20.0,56
+# wheat gluten: fed to farmed fish although FAO books it as non-food (feed.NONFOOD_AS_FEED); Feedipedia vital wheat gluten, about 80% of dry matter
+24,Wheat gluten,75.0,15
 157,Sugar beet,1.2,
 329,Cotton seed,22.0,
 567,Watermelons,0.6,

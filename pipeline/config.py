@@ -99,6 +99,14 @@ SOURCES: dict[str, dict[str, str]] = {
         "licence": "US government work, public domain",
         "licence_url": "https://www.usa.gov/government-copyright",
     },
+    "fao_fishstat": {
+        "title": "FishStat: Global production by production source (aquaculture and capture), 1950-",
+        "publisher": "Food and Agriculture Organization of the United Nations (FAO), Fisheries and Aquaculture",
+        "url": "https://www.fao.org/fishery/en/collection/global_production",
+        "file_url": "https://www.fao.org/fishery/static/Data/GlobalProduction_2026.1.0.zip",
+        "licence": "CC BY-NC-SA 3.0 IGO (FAO's terms for FishStat data)",
+        "licence_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/",
+    },
     "dgagri_feed_protein": {
         "title": "EU feed protein balance sheet",
         "publisher": "European Commission, DG Agriculture and Rural Development",

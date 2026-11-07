@@ -351,8 +351,11 @@ the EU as one) off pigs and poultry, as section "Feed" does for the meat and egg
 leaf items Pigmeat, Poultry Meat and Eggs, `SSR_i' = (1 − f) · SSR_i`; for Bovine Meat and dairy
 (as one food) `SSR_i' = (1 − f · c_cattle) · SSR_i`, for Mutton & Goat Meat
 `(1 − f · c_small)` (section "Feed", "Cattle, sheep and goats"); for oil and beer, the crop they
-are made from (below), `SSR_i' = s_crop · SSR_i`; every other item unchanged, then the same two
-weighted means over the same items:
+are made from (below), `SSR_i' = s_crop · SSR_i`; for each fish item, `SSR_i' = (1 − f · a_i) ·
+SSR_i` with `a_i` the share of its production farmed on feed (section "Feed", "Farmed fish"); for
+wheat, `SSR' = P / (D − g)` with `g` the wheat FAO books for gluten used outside food (section
+"Feed", "Wheat gluten"); every other item unchanged, then the same two weighted means over the
+same items:
 
     feed_ssr_w   = Σ_i w_i · SSR_i' / Σ_i w_i
     feed_share_w = Σ_i w_i · min(SSR_i', 100) / Σ_i w_i
@@ -502,8 +505,8 @@ agree on the map's band: both at or above 104.17% (more than a year) or both und
 six months). The map and the country's food list then show that band, in words ("more than a
 year on any reading of FAO's figures"), never a number; rankings still leave the food out.
 For "all food" the range is not feed-adjusted; the feed step lowers a reading by at most the
-imported share of feed protein `f` (only animal products, each at most by `f`), and tracing the
-crops behind oil and beer by at most
+imported share of feed protein `f` (only animal products and farmed fish, each at most by `f`),
+and tracing the crops behind oil and beer by at most
 
     trace_pts = Σ_made k_i · SSR_i · (1 − s_crop) / Σ_A k_i
 
@@ -511,7 +514,9 @@ points, with SSR_i the item's own ratio, or reading B's P / max(D, food, 0) wher
 contradicts itself, and Σ_A k_i the calories of reading A (the smaller divisor, so the larger
 bound). The two steps touch different foods, so the lower reading counts as
 `(1 − f) × low − trace_pts` (`kcal.withheld.trace_pts`, exported for every withheld "all food"
-kcal figure). Ukraine (2021–2023): 184.5% × (1 − 0.003) − 0.28, more than a year on any
+kcal figure). Taking gluten's wheat out of wheat's use raises a reading by at most
+`raise_pts = k_wheat · SSR_wheat · (D / (D − g) − 1) / Σ_A k_i` (SSR_wheat its own or reading B's),
+so the upper reading counts as `high + raise_pts` (`kcal.withheld.raise_pts`, where g > 0). Ukraine (2021–2023): 184.5% × (1 − 0.003) − 0.28, more than a year on any
 reading.
 
 ## Trade partners (who buys from and sells to whom)
@@ -1020,7 +1025,9 @@ self-sufficiency is left for the animals that live on it.
 - **The EU as one:** members' sums of P, M and feed, with M = members' imports from outside the
   EU: per item and year the share of members' reported imports from non-members in FAO's trade
   matrix (`trade.extract`), applied to the members' summed imports; an item without trade-matrix
-  rows keeps all imports.
+  rows keeps all imports. The crops cakes are pressed from get their share too (until 2026-11-07
+  only the feed items did, so linseed counted as all bought outside the EU: 0.01 points of the
+  EU's `f`, found when the recompute disagreed).
 - **Imported share of feed protein** `f = Σ feed_i · protein_i · (1 − s_i) / Σ feed_i · protein_i`,
   with the largest imported items (share of the imported protein) for the page.
 - **Feed-adjusted self-sufficiency** (tonnes basis): pigs and poultry live on concentrate feed,
@@ -1046,6 +1053,41 @@ self-sufficiency is left for the animals that live on it.
 - **Export:** `ssr.json` country `feed`: `{imported_pct, top: [[item, % of imported protein] × ≤3],
   meat_ssr, eggs_ssr, dairy_ssr, c_cattle, c_small, items_pct}` (`items_pct` = share of the feed
   tonnage the table covers; `c_*` in %).
+- **Wheat gluten** (2026-11-06). FAO's accounts book Norway's imported wheat gluten, 209 kt a year
+  2021–2023, as "Other uses (non-food)" and none as feed; it is salmon feed. Wheat gluten (SUA item
+  24, 75% crude protein as fed, parent wheat) is in the feed basket with its non-food use counted as
+  feed (`feed.NONFOOD_AS_FEED`), in every country (40% of the world's non-food gluten is Norway's,
+  28% the Netherlands'; elsewhere it is small). The food balance turns that gluten back into wheat at
+  12.5 t of wheat per t of gluten (8% extraction: Norway's "Wheat and products" non-food use is
+  12.5 × its gluten's in each of 2021, 2022 and 2023), so Norway "used" 3.6 Mt of wheat, 2.6 Mt of
+  it the gluten's, and its wheat was 7.6% self-sufficient against USDA's 48%. "All food" counts
+  wheat as people eat it, so that wheat leaves its use: `g = min(12.5 × gluten non-food use, the
+  wheat's non-food use)` (kt, window means; capped because the Netherlands' gluten would otherwise
+  exceed the wheat FAO books), `SSR_wheat' = P / (D − g)` (Norway 7.6% → 27%). The food pages keep
+  FAO's wheat. Exported as `feed.parquet` `gluten_wheat_kt`.
+- **Farmed fish** (2026-11-06). Salmon, trout, carp, tilapia and shrimp farms buy feed as pig and
+  poultry farms do; wild fish and filter feeders do not. FAO FishStat's global production by source
+  (`atlas download --source fishstat`, `pipeline/aquafeed.py`; CC BY-NC-SA 3.0 IGO) gives per country,
+  species and source (capture; aquaculture in fresh, brackish or marine water) the tonnes live weight
+  behind FAO's fish balances. Species map to FBS fish items through their ISSCAAP group
+  (`mappings/fish_isscaap.csv`, FAO's food balance grouping). A species counts as **fed** when it is
+  farmed and its group is fed (fish, crustaceans, frogs, turtles), except silver and bighead carp
+  (filter feeders); molluscs, seaweeds and other invertebrates are FAO's non-fed aquaculture. Per
+  country and FBS fish item, window means: `a_i = fed farmed t / all t` (EU27: members summed).
+  Norway's freshwater and diadromous fish (salmon) 100%, its demersal fish 1%, China's freshwater
+  fish 71%, Vietnam's 96%. Farmed fish count for the home-grown share of their feed like pigs and
+  poultry, with the country's `f` (the plant and gluten part of their feed: FAO's crop and livestock
+  accounts have no fishmeal or fish oil; the fish fed to farms is already in the fish balance's
+  use, as grain fed to pigs is in the grain's): fish group `fish_ssr = (P_fish − f · Σ_i a_i · P_i)
+  / D_fish`, exported as `feed.fish_ssr` where some fish is farmed on feed, and `(1 − f · a_i)` per
+  fish item in "all food". Approximations: the country's average `f` for fish feed, although salmon
+  feed is mostly imported soy concentrate, rapeseed oil and gluten; farms that feed only what grows
+  in the pond count as fed.
+- **Effect of both** (2021–2023, headline after the oil and beer tracing): Norway 39.1% → 33.1%
+  (wheat +5 points, salmon on 79% imported feed −10, gluten raising `f` from 70.5% to 79.4%
+  −1; NIBIO's own figure, energy basis and corrected for imported feed, is 42% for 2023 and a
+  preliminary 35% for 2024), Iceland 125% → 121%, Vietnam −1.5, Indonesia −1.1, Chile −0.9;
+  Poland +1.8, the EU27 and the Netherlands +0.5 (their gluten's wheat); 57 of 171 countries move.
 - **Second opinion (EU):** DG AGRI's *EU feed protein balance sheet* (`pipeline/feedcheck.py`)
   gives per marketing year and protein source the EU's feed use in crude protein (column H) and
   the part of EU origin (I), counting meal from imported beans as not of EU origin, as here.
